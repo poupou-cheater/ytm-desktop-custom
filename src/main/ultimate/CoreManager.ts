@@ -185,6 +185,8 @@ export class UltimateCoreManager {
 
     // Themes — all metadata comes from the .theme.js files themselves
     ipcMain.handle("ultimate:scan-themes", async () => {
+      // Re-inject themes into the renderer to apply updated JS logic live
+      await this.injectThemes();
       return this.themeManager.getThemesMetadata();
     });
 

@@ -82,6 +82,10 @@ class UltimateThemeEngine {
   _onThemeRegistered(themeId) {
     if (this._pendingTheme && this._pendingTheme === themeId) {
       this.setTheme(this._pendingTheme);
+    } else if (this.currentTheme === themeId) {
+      // Live reload: if the currently active theme is re-registered, re-apply it
+      console.log("[Ultimate] Reloading active theme from disk: " + themeId);
+      this.setTheme(themeId);
     }
   }
 
