@@ -170,72 +170,36 @@ class UltimateThemeEngine {
     document.head.appendChild(this.bgStyleEl);
 
     // Periodically strip inline backgrounds + inject into shadow DOMs
+    // CPU-friendly: 3s interval for cleanup, CSS rules handle the rest
     var self = this;
-    this._bgNuking = false;
-    this._bgNukeQueued = false;
     this._bgInterval = setInterval(function() {
-      if (self._bgNuking) return;
-      self._bgNuking = true;
-      self._stripInlineBackgrounds();
-      self._injectShadowDOMStyles();
       self._nukeQuickPicksBackground();
-      self._bgNuking = false;
-    }, 800);
-    // Early passes — catch backgrounds as they appear
-    [200, 500, 1000, 2000, 4000, 6000].forEach(function(ms) {
+      self._stripInlineBackgrounds();
+    }, 3000);
+    // Early passes — catch backgrounds during initial load
+    [300, 1000, 3000, 6000].forEach(function(ms) {
       setTimeout(function() {
-        if (self._bgNuking) return;
-        self._bgNuking = true;
         self._stripInlineBackgrounds();
         self._injectShadowDOMStyles();
         self._nukeQuickPicksBackground();
-        self._bgNuking = false;
       }, ms);
     });
+    // Shadow DOM injection: only once at 2s and 8s (rarely changes)
+    setTimeout(function() { self._injectShadowDOMStyles(); }, 2000);
+    setTimeout(function() { self._injectShadowDOMStyles(); }, 8000);
 
-    // MutationObserver — catch YTM re-applying backgrounds in real time
-    // Uses re-entrancy guard + debounce to prevent infinite loop
-    // (our nuke modifies styles → triggers observer → which calls nuke again)
+    // Navigation observer — only react to page navigations (yt-navigate), not every DOM change
     if (this._bgObserver) this._bgObserver.disconnect();
-    this._bgObserver = new MutationObserver(function(mutations) {
-      if (self._bgNuking) return; // Prevent infinite loop
-      var needsNuke = false;
-      for (var i = 0; i < mutations.length; i++) {
-        var m = mutations[i];
-        var tn = m.target && m.target.tagName ? m.target.tagName.toLowerCase() : "";
-        if (m.type === "attributes" && (m.attributeName === "style" || m.attributeName === "class")) {
-          if (tn === "ytmusic-browse-response" || tn === "ytmusic-immersive-header-renderer" ||
-              tn === "ytmusic-background-overlay-renderer" || tn === "ytmusic-header-renderer" ||
-              (m.target.classList && m.target.classList.contains("background-gradient"))) {
-            needsNuke = true;
-          }
-        }
-        if (m.type === "childList" && m.addedNodes.length > 0) {
-          needsNuke = true;
-        }
-      }
-      if (needsNuke && !self._bgNukeQueued) {
-        self._bgNukeQueued = true;
-        requestAnimationFrame(function() {
-          self._bgNuking = true;
-          self._nukeQuickPicksBackground();
-          self._bgNuking = false;
-          self._bgNukeQueued = false;
-        });
-      }
-    });
-    this._bgObserver.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["style", "class"]
+    document.addEventListener("yt-navigate-finish", function() {
+      setTimeout(function() { self._nukeQuickPicksBackground(); self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 300);
+      setTimeout(function() { self._nukeQuickPicksBackground(); self._stripInlineBackgrounds(); }, 1500);
     });
 
     console.log("[Ultimate] Background transparency injected");
   }
   _installAdBlocker() {
     // Hooks already installed at script load time (see bottom of file)
-    // This just sets up the backup DOM-based skip for ads that slip through
+    // Backup DOM-based skip — 1s interval (uBlock handles most ads)
     setInterval(function() {
       var movie = document.querySelector(".html5-video-player");
       if (!movie) return;
@@ -248,7 +212,7 @@ class UltimateThemeEngine {
         var skip = document.querySelector(".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button");
         if (skip) skip.click();
       }
-    }, 250);
+    }, 1000);
   }
   _injectShadowDOMStyles() {
     // Inject transparency + slider restore into every shadow root
@@ -286,36 +250,29 @@ class UltimateThemeEngine {
     }
   }
   _stripInlineBackgrounds() {
-    var els = document.querySelectorAll("[style]");
+    // Targeted: only query the specific YTM elements that set inline backgrounds
+    // (avoids the expensive querySelectorAll("[style]") which matches everything)
+    var selectors = [
+      "[style*='--ytmusic-background-overlay-background']",
+      "ytmusic-browse-response[style]",
+      "ytmusic-section-list-renderer[style]",
+      "ytmusic-header-renderer[style]",
+      "ytmusic-immersive-header-renderer[style]",
+      "ytmusic-carousel-shelf-renderer[style]",
+      "#browse-page[style]",
+      "#content-wrapper[style]"
+    ];
+    var els = document.querySelectorAll(selectors.join(","));
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
-      // Skip our own theme elements
       if (el.id && el.id.indexOf("ultimate") === 0) continue;
-      if (el.closest && el.closest("#ultimate-starry-container")) continue;
-      // Skip neko cat and chrome extension elements
-      if (el.id === "oneko") continue;
-      if (el.tagName === "IMG" || el.tagName === "VIDEO" || el.tagName === "CANVAS") continue;
-      // Skip thumbnail containers — never strip their background (thumbnails use bg-image)
-      var tn = el.tagName ? el.tagName.toLowerCase() : "";
-      if (tn === "yt-img-shadow" || tn === "ytmusic-thumbnail-renderer") continue;
-      if (el.classList && (el.classList.contains("image") || el.classList.contains("thumbnail"))) continue;
-      // Skip SVG elements
-      if (el.tagName === "svg" || el.tagName === "SVG" || (el.closest && el.closest("svg"))) continue;
       var s = el.getAttribute("style") || "";
-      // Strip --ytmusic-background-overlay-background CSS var (Quick Picks overlay)
       if (s.indexOf("--ytmusic-background-overlay-background") !== -1) {
         el.style.setProperty("--ytmusic-background-overlay-background", "transparent", "important");
-        el.style.setProperty("background-color", "transparent", "important");
-        el.style.setProperty("background", "transparent", "important");
       }
       if (s.indexOf("background") !== -1) {
-        // Don't touch elements with only CSS custom properties (except the overlay one we already handled)
-        if (s.indexOf("--") !== -1 && s.indexOf("--ytmusic-background-overlay-background") === -1 && s.indexOf("background:") === -1 && s.indexOf("background-image:") === -1) continue;
-        // Don't touch elements that have background-size (likely thumbnails with bg-image)
         if (s.indexOf("background-size") !== -1 || s.indexOf("background-position") !== -1) continue;
-        // Only strip background-color
         el.style.setProperty("background-color", "transparent", "important");
-        // Strip background-image only if it's a gradient (NOT url — url is thumbnails)
         var bgImg = el.style.backgroundImage || "";
         if (bgImg.indexOf("gradient") !== -1) {
           el.style.setProperty("background-image", "none", "important");
