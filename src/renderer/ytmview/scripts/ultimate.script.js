@@ -108,18 +108,14 @@ class UltimateThemeEngine {
     this.bgStyleEl = document.createElement("style");
     this.bgStyleEl.id = "ultimate-theme-bg";
     this.bgStyleEl.textContent = [
-      // 1. Kill backgrounds — use background-color only (not shorthand) to preserve extension sprites
-      "html,body,ytmusic-app{background-color:transparent!important;background-image:none!important}",
+      // 1. Kill background-color globally (safe — doesn't touch images/thumbnails)
+      "html,body,ytmusic-app{background-color:transparent!important}",
       "ytmusic-app *:not(#oneko):not(img):not(video):not(canvas){background-color:transparent!important}",
-      // 2. Kill background-image on YTM-specific elements (gradients, overlays)
-      "ytmusic-browse-response,ytmusic-browse-response *:not(img)," +
-      "ytmusic-section-list-renderer,ytmusic-section-list-renderer *:not(img)," +
-      "ytmusic-shelf-renderer,ytmusic-carousel-shelf-renderer," +
+      // 2. Kill background-image ONLY on overlay/gradient containers (NOT their children — children have thumbnails!)
+      "ytmusic-app,ytmusic-browse-response,ytmusic-section-list-renderer," +
       "ytmusic-immersive-header-renderer,ytmusic-header-renderer," +
-      "ytmusic-tabbed-search-results-renderer,ytmusic-chip-cloud-renderer," +
-      "#browse-page,#content,#contents,#header," +
-      ".fullbleed,.background-gradient," +
-      "ytmusic-background-overlay-renderer{background-image:none!important;background:transparent!important}",
+      "#browse-page,.background-gradient," +
+      "ytmusic-background-overlay-renderer{background-image:none!important}",
       // 3. Restore OUR starry container gradient
       "#ultimate-starry-container{background:var(--ut-bg)!important}",
       // 4. Player bar: dark blur for readability
@@ -128,11 +124,9 @@ class UltimateThemeEngine {
       "ytmusic-nav-bar{background:rgba(0,0,0,0.35)!important;backdrop-filter:blur(8px)!important}",
       // 6. Hover states
       "ytmusic-player-queue-item:hover,ytmusic-responsive-list-item-renderer:hover,tp-yt-paper-item:hover{background:rgba(255,255,255,0.06)!important}",
-      // 7. Neko cat — protect extension elements
-      "#oneko{background-image:var(--oneko-bg)!important}",
-      // 8. YTM CSS custom properties
+      // 7. YTM CSS custom properties
       "ytmusic-app{--ytmusic-general-background-a:transparent!important;--ytmusic-general-background-b:transparent!important;--ytmusic-general-background-c:transparent!important;--ytmusic-background:transparent!important;--ytmusic-color-black1:transparent!important;--ytmusic-color-black2:transparent!important;--ytmusic-color-black3:transparent!important;--ytmusic-color-black4:transparent!important}",
-      // 9. Hide YTM ads
+      // 8. Hide YTM ad UI elements
       "ytmusic-mealbar-promo-renderer{display:none!important}",
       "ytmusic-statement-banner-renderer{display:none!important}",
       ".ytmusic-promoted-sparkles-text-search-renderer{display:none!important}",
@@ -140,23 +134,40 @@ class UltimateThemeEngine {
       "#masthead-ad{display:none!important}",
       ".ad-showing .html5-video-container{display:none!important}",
       ".ytp-ad-module{display:none!important}",
-      ".ytp-ad-overlay-container{display:none!important}",
-      "tp-yt-paper-dialog.ytmusic-popup-container{display:none!important}"
+      ".ytp-ad-overlay-container{display:none!important}"
     ].join("");
     document.head.appendChild(this.bgStyleEl);
 
-    // Periodically strip inline backgrounds + inject into shadow DOMs
+    // Periodically strip inline backgrounds + inject into shadow DOMs + skip ads
     var self = this;
     this._bgInterval = setInterval(function() {
       self._stripInlineBackgrounds();
       self._injectShadowDOMStyles();
     }, 1500);
+    // Ad skipper — much faster interval since ads need quick response
     setTimeout(function() { self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 300);
     setTimeout(function() { self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 1000);
     setTimeout(function() { self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 3000);
     setTimeout(function() { self._injectShadowDOMStyles(); }, 5000);
 
-    console.log("[Ultimate] Background transparency + ad hide injected");
+    console.log("[Ultimate] Background transparency injected");
+  }
+  _installAdBlocker() {
+    // Hooks already installed at script load time (see bottom of file)
+    // This just sets up the backup DOM-based skip for ads that slip through
+    setInterval(function() {
+      var movie = document.querySelector(".html5-video-player");
+      if (!movie) return;
+      if (movie.classList.contains("ad-showing") || movie.classList.contains("ad-interrupting")) {
+        var video = document.querySelector("video");
+        if (video && video.duration && isFinite(video.duration) && video.duration < 300) {
+          video.currentTime = video.duration;
+          video.muted = true;
+        }
+        var skip = document.querySelector(".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button");
+        if (skip) skip.click();
+      }
+    }, 250);
   }
   _injectShadowDOMStyles() {
     // Inject transparency + slider restore into every shadow root
@@ -597,6 +608,64 @@ class UltimateUIInjector {
 }
 
 (function() {
+  // Install ad blocker hooks IMMEDIATELY — before anything else loads
+  if (!window._utAdBlockInstalled) {
+    // Hook fetch
+    var origFetch = window.fetch;
+    window.fetch = function(input, init) {
+      var url = (typeof input === "string") ? input : (input && input.url ? input.url : "");
+      return origFetch.apply(this, arguments).then(function(response) {
+        if (url.indexOf("/youtubei/v1/player") !== -1) {
+          return response.clone().text().then(function(body) {
+            try {
+              var json = JSON.parse(body);
+              var stripped = false;
+              ["adPlacements", "playerAds", "adSlots", "adBreakParams", "adBreakHeartbeatParams"].forEach(function(key) {
+                if (json[key]) { delete json[key]; stripped = true; }
+              });
+              if (json.playbackTracking) {
+                ["ptrackingUrl", "qoeUrl", "atrUrl"].forEach(function(key) {
+                  if (json.playbackTracking[key] && json.playbackTracking[key].baseUrl && json.playbackTracking[key].baseUrl.indexOf("adformat") !== -1) {
+                    delete json.playbackTracking[key]; stripped = true;
+                  }
+                });
+              }
+              if (stripped) console.log("[Ultimate] Ads stripped from player API (fetch)");
+              return new Response(JSON.stringify(json), { status: response.status, statusText: response.statusText, headers: response.headers });
+            } catch(e) { return response; }
+          });
+        }
+        return response;
+      });
+    };
+    // Hook XHR
+    var origOpen = XMLHttpRequest.prototype.open;
+    var origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function(method, url) { this._utUrl = url; return origOpen.apply(this, arguments); };
+    XMLHttpRequest.prototype.send = function() {
+      var xhr = this;
+      if (xhr._utUrl && xhr._utUrl.indexOf("/youtubei/v1/player") !== -1) {
+        xhr.addEventListener("readystatechange", function() {
+          if (xhr.readyState === 4 && xhr.status === 200) {
+            try {
+              var json = JSON.parse(xhr.responseText);
+              var s = false;
+              ["adPlacements", "playerAds", "adSlots", "adBreakParams", "adBreakHeartbeatParams"].forEach(function(k) { if (json[k]) { delete json[k]; s = true; } });
+              if (s) {
+                Object.defineProperty(xhr, "responseText", { value: JSON.stringify(json), writable: false, configurable: true });
+                Object.defineProperty(xhr, "response", { value: JSON.stringify(json), writable: false, configurable: true });
+                console.log("[Ultimate] Ads stripped from player API (XHR)");
+              }
+            } catch(e) {}
+          }
+        });
+      }
+      return origSend.apply(this, arguments);
+    };
+    window._utAdBlockInstalled = true;
+    console.log("[Ultimate] API ad blocker hooks installed (early)");
+  }
+
   console.log("[Ultimate] Theme engine initializing...");
   new UltimateUIInjector();
   window.__ultimateTheme = new UltimateThemeEngine();

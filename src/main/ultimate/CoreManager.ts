@@ -98,22 +98,13 @@ export class UltimateCoreManager {
 
     const adPatterns = [
       /\/pagead\//,
-      /\/ptracking\?/,
       /\/api\/stats\/ads/,
-      /\/ads\/watch\//,
       /\/pcs\/activeview/,
-      /\/pagead\/adview/,
       /doubleclick\.net/,
       /googlesyndication\.com/,
       /googleadservices\.com/,
       /\/get_midroll_/,
-      /\/ad_break/,
-      /\/api\/stats\/qoe\?.*adformat/,
       /\/youtubei\/v1\/player\/ad_break/,
-      /\/generate_204\?.*ad/,
-      /\.googlevideo\.com\/.*&ctier=L&/,
-      /&ad_type=/,
-      /\/log_interaction\?.*ad/,
     ];
 
     ses.webRequest.onBeforeRequest({ urls: ["*://*.youtube.com/*", "*://*.googlevideo.com/*", "*://*.doubleclick.net/*", "*://*.googlesyndication.com/*", "*://*.googleadservices.com/*"] }, (details, callback) => {
