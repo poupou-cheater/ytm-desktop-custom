@@ -1,3 +1,8 @@
+# not mine
+
+# this is version custom that autorize you to get chrome extension, no ad, custom theme
+## modidified version of https://github.com/ytmdesktop/ytmdesktop
+
 # YouTube Music Desktop App
 ### Now with a Fresh new Codebase 😉
 
