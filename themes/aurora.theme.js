@@ -109,85 +109,78 @@
       var intensity = c.intensity || 1.2;
       var maxHeight = (c.rayHeight || 0.6) * h;
 
-      // 1. Fond du Ciel (Gradient Sarcelle -> Bleu Nuit)
+      // 1. Fond du Ciel
       var skyGrad = ctx.createLinearGradient(0, 0, 0, h);
       skyGrad.addColorStop(0, c.skyTopColor || "#020716");
       skyGrad.addColorStop(1, c.skyBottomColor || "#0a2233");
       ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, w, h);
 
-      // 2. Rendu des Étoiles
+      // 2. Rendu des Étoiles (Optimisé : fillRect au lieu de arc)
       ctx.fillStyle = "#ffffff";
       for (var i = 0; i < this._stars.length; i++) {
         var s = this._stars[i];
         var twinkle = Math.sin(t * s.twinkleSpeed + s.offset) * 0.4 + 0.6;
         ctx.globalAlpha = twinkle;
-        ctx.beginPath();
-        ctx.arc(s.x * w, s.y * h, s.size, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillRect(s.x * w, s.y * h, s.size, s.size);
       }
       ctx.globalAlpha = 1.0;
 
-      // 3. Aurore Boréale - Technique des Piliers Verticaux (Ray Tracing 2D)
+      // 3. Aurore Boréale (Optimisé : Gradient réutilisé)
       var color1 = this._hexToRgb(c.auroraColor1 || "#1aff66");
       var color2 = this._hexToRgb(c.auroraColor2 || "#00eeff");
 
       ctx.save();
-      ctx.globalCompositeOperation = "lighter"; // Mode fusion "lumière" comme dans l'image
+      ctx.globalCompositeOperation = "lighter";
 
-      var bands = 2; // Deux rideaux qui se superposent
-      var rayWidth = 3; // Épaisseur des stries
+      var bands = 2;
+      var rayWidth = 4; // Un peu plus large pour gagner en performance
 
       for (var b = 0; b < bands; b++) {
         var isPrimary = b === 0;
         var rgb = isPrimary ? color1 : color2;
-        var baseY = h * 0.75 + b * h * 0.05; // Ligne de base en bas de l'écran
+        var baseY = h * 0.75 + b * h * 0.05;
 
-        // On dessine de gauche à droite, rayon par rayon
+        // On crée UN SEUL dégradé vertical par bande
+        var bandGrad = ctx.createLinearGradient(0, 0, 0, -maxHeight);
+        bandGrad.addColorStop(0, "rgba(" + rgb + ", 1)");
+        bandGrad.addColorStop(0.2, "rgba(" + rgb + ", 0.8)");
+        bandGrad.addColorStop(0.6, "rgba(" + rgb + ", 0.2)");
+        bandGrad.addColorStop(1, "rgba(" + rgb + ", 0)");
+
         for (var x = 0; x < w; x += rayWidth) {
-          var nx = x / w; // Normalisation de X (0 à 1)
+          var nx = x / w;
 
-          // Mathématiques pour l'ondulation (la forme du rideau)
           var wave1 = Math.sin(nx * 3 - t * speed + b) * (h * 0.08);
           var wave2 = Math.cos(nx * 8 + t * speed * 1.5) * (h * 0.03);
           var currentBaseY = baseY + wave1 + wave2;
 
-          // Mathématiques pour la hauteur et l'intensité de CHAQUE pilier (effet strié)
-          var rayNoise = Math.sin(nx * 80 + t * 4) * 0.5 + 0.5; // Stries rapides
-          var clusterNoise = Math.sin(nx * 10 - t) * 0.5 + 0.5; // Groupes lumineux
+          var rayNoise = Math.sin(nx * 80 + t * 4) * 0.5 + 0.5;
+          var clusterNoise = Math.sin(nx * 10 - t) * 0.5 + 0.5;
 
           var currentHeight = maxHeight * (0.4 + clusterNoise * 0.4 + rayNoise * 0.2);
           var alpha = (0.1 + clusterNoise * 0.3 + rayNoise * 0.2) * intensity;
+          if (isPrimary) alpha *= 1.2;
 
-          if (isPrimary) alpha *= 1.2; // Le vert doit dominer
-
-          // Création du pilier de lumière (Dégradé vertical)
-          var grad = ctx.createLinearGradient(x, currentBaseY, x, currentBaseY - currentHeight);
-
-          // La base est très lumineuse, le haut se dissipe dans le ciel
-          grad.addColorStop(0, "rgba(" + rgb + "," + Math.min(alpha * 1.5, 1) + ")");
-          grad.addColorStop(0.2, "rgba(" + rgb + "," + alpha + ")");
-          grad.addColorStop(0.6, "rgba(" + rgb + "," + alpha * 0.3 + ")");
-          grad.addColorStop(1, "rgba(" + rgb + ", 0)");
-
-          ctx.fillStyle = grad;
-          // Dessine la strie (x, y de départ, largeur, hauteur NÉGATIVE pour monter)
-          ctx.fillRect(x, currentBaseY, rayWidth, -currentHeight);
+          ctx.globalAlpha = Math.min(alpha, 1.0);
+          ctx.setTransform(1, 0, 0, 1, x, currentBaseY);
+          ctx.fillStyle = bandGrad;
+          ctx.fillRect(0, 0, rayWidth, -currentHeight);
         }
+        ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
 
-        // Ligne directrice lumineuse (La base intense de l'aurore)
+        // Ligne de base (Stroke est okay car hors de la boucle x)
         ctx.beginPath();
-        for (var x = 0; x <= w; x += 10) {
+        for (var x = 0; x <= w; x += 20) {
           var nx = x / w;
           var wave1 = Math.sin(nx * 3 - t * speed + b) * (h * 0.08);
           var wave2 = Math.cos(nx * 8 + t * speed * 1.5) * (h * 0.03);
           var currentBaseY = baseY + wave1 + wave2;
-
           if (x === 0) ctx.moveTo(x, currentBaseY);
           else ctx.lineTo(x, currentBaseY);
         }
         ctx.strokeStyle = "rgba(" + rgb + "," + 0.5 * intensity + ")";
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2;
         ctx.stroke();
       }
 
