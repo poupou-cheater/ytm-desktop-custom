@@ -1352,6 +1352,24 @@ app.on("ready", async () => {
   // ----- INJECTION DU CERVEAU ULTIMATE ICI -----
   const ultimateCore = new UltimateCoreManager(mainWindow, ytmView);
 
+  // Inject external themes — triggered when the preload signals registry is ready
+  let themeInjected = false;
+  ipcMain.on("ultimate:registry-ready", async () => {
+    if (themeInjected) return;
+    themeInjected = true;
+    log.info("UltimateCoreManager: Registry ready signal received, sending themes to preload...");
+    try {
+      // Send each theme file to the preload for injection via webFrame (same JS context as registry)
+      const themeFiles = ultimateCore.getThemeFiles();
+      for (const tf of themeFiles) {
+        ytmView.webContents.send("ultimate:inject-theme-file", tf.filename, tf.content);
+      }
+      log.info(`UltimateCoreManager: Sent ${themeFiles.length} theme files to preload`);
+    } catch (e) {
+      log.error("UltimateCoreManager: Theme injection failed:", e);
+    }
+  });
+
   if (store.get("appearance").zoom) ytmView.webContents.setZoomFactor(store.get("appearance").zoom / 100);
 
   if (store.get("general").showNotificationOnSongChange) nowPlayingNotifications.enable();

@@ -204,6 +204,19 @@ window.addEventListener("load", async () => {
   // --- INJECTION 3 : Exécution du noyau UI dans le main world ---
   await webFrame.executeJavaScript(ultimateScript);
 
+  // Notify main process that theme registry is ready
+  ipcRenderer.send("ultimate:registry-ready");
+
+  // Receive theme files from main process and inject via webFrame (same JS context as registry)
+  ipcRenderer.on("ultimate:inject-theme-file", async (_event, filename: string, content: string) => {
+    try {
+      await webFrame.executeJavaScript(content);
+      console.log(`[Ultimate] Injected theme file: ${filename}`);
+    } catch (e) {
+      console.error(`[Ultimate] Failed to inject theme file ${filename}:`, e);
+    }
+  });
+
   const initialTheme = await memoryStore.get("ultimateTheme");
   const initialConfig = await memoryStore.get("ultimateThemeConfig");
 

@@ -2,6 +2,7 @@ import { app, BrowserWindow, BrowserView, ipcMain, session } from "electron";
 import log from "electron-log";
 import { ExtensionManager } from "./ExtensionManager";
 import { DownloadManager } from "./DownloadManager";
+import { ThemeManager } from "./ThemeManager";
 import { ThemeConfig } from "../../shared/store/schema";
 
 const DEFAULT_THEME_CONFIG: ThemeConfig = {
@@ -20,6 +21,7 @@ export class UltimateCoreManager {
   private ytmView: BrowserView;
   public extensionManager: ExtensionManager;
   public downloadManager: DownloadManager;
+  public themeManager: ThemeManager;
 
   constructor(window: BrowserWindow, view: BrowserView) {
     this.mainWindow = window;
@@ -27,6 +29,7 @@ export class UltimateCoreManager {
 
     this.extensionManager = new ExtensionManager();
     this.downloadManager = new DownloadManager();
+    this.themeManager = new ThemeManager();
     this.downloadManager.setView(view);
 
     this.setupOptimizations();
@@ -66,17 +69,48 @@ export class UltimateCoreManager {
     log.info("UltimateCoreManager: Initialized");
   }
 
+  /**
+   * Inject external theme files into the renderer after page loads
+   */
+  public async injectThemes(): Promise<void> {
+    if (this.ytmView && this.ytmView.webContents) {
+      await this.themeManager.injectThemes(this.ytmView);
+      log.info("UltimateCoreManager: External themes injected");
+    }
+  }
+
+  /**
+   * Get all theme file contents for IPC-based injection
+   */
+  public getThemeFiles(): { filename: string; content: string }[] {
+    const files = this.themeManager.scanThemes();
+    const result: { filename: string; content: string }[] = [];
+    for (const file of files) {
+      const content = this.themeManager.readTheme(file);
+      if (content) {
+        result.push({ filename: file, content });
+      }
+    }
+    log.info(`UltimateCoreManager: Read ${result.length} theme files: ${result.map(f => f.filename).join(", ")}`);
+    return result;
+  }
+
   private setupOptimizations(): void {
+    // GPU & rendering optimizations
     app.commandLine.appendSwitch("disable-renderer-backgrounding");
     app.commandLine.appendSwitch("disable-audio-output-resampler");
     app.commandLine.appendSwitch("enable-gpu-rasterization");
     app.commandLine.appendSwitch("enable-zero-copy");
+    app.commandLine.appendSwitch("enable-features", "VaapiVideoDecoder,CanvasOopRasterization");
+    app.commandLine.appendSwitch("disable-features", "UseChromeOSDirectVideoDecoder");
+    // V8 memory tuning
+    app.commandLine.appendSwitch("js-flags", "--expose-gc --max-old-space-size=256 --optimize-for-size");
 
     this.mainWindow.on("blur", () => {
       if (this.ytmView) {
         try { this.ytmView.webContents.send("ultimate:app-state", { state: "background" }); } catch {}
       }
-      if (global.gc) global.gc();
+      this.doGC();
     });
 
     this.mainWindow.on("focus", () => {
@@ -89,7 +123,21 @@ export class UltimateCoreManager {
       if (this.ytmView) {
         try { this.ytmView.webContents.send("ultimate:app-state", { state: "minimized" }); } catch {}
       }
+      this.doGC();
+      // Clear renderer caches on minimize to free memory
+      if (this.ytmView && this.ytmView.webContents) {
+        try { this.ytmView.webContents.session.clearCache(); } catch {}
+      }
     });
+
+    // Periodic GC — lightweight, no process spawning
+    setInterval(() => this.doGC(), 30000);
+
+    log.info("UltimateCoreManager: Memory optimizer active (pure JS, no PowerShell)");
+  }
+
+  private doGC(): void {
+    if (global.gc) global.gc();
   }
 
   private setupAdBlocker(): void {
@@ -149,6 +197,14 @@ export class UltimateCoreManager {
 
     ipcMain.handle("ultimate:open-extension-options", async (_event, id: string) => {
       return this.extensionManager.openExtensionOptions(id);
+    });
+
+    ipcMain.handle("ultimate:list-themes", async () => {
+      return this.themeManager.scanThemes();
+    });
+
+    ipcMain.handle("ultimate:get-themes-dir", async () => {
+      return this.themeManager.getThemesDir();
     });
   }
 

@@ -35,7 +35,7 @@ class UltimateThemeEngine {
       if (event.data && event.data.type === "ULTIMATE_APP_STATE") {
         this.isPaused = event.data.state === "background" || event.data.state === "minimized";
         if (this.isPaused) cancelAnimationFrame(this.animationFrameId);
-        else { this.lastFrameTime = performance.now(); this.renderLoop(performance.now()); }
+        // External themes manage their own animation loops — no renderLoop call needed
       }
     });
   }
@@ -62,7 +62,13 @@ class UltimateThemeEngine {
   }
   setFpsLimit(fps) { this.fpsLimit = fps || 60; }
   setTheme(themeName) {
+    // Cleanup previous external theme
+    if (this._activeExternalTheme && this._activeExternalTheme.destroy) {
+      this._activeExternalTheme.destroy();
+      this._activeExternalTheme = null;
+    }
     this.currentTheme = themeName;
+    this._pendingTheme = null;
     cancelAnimationFrame(this.animationFrameId);
     this.ctx = null;
     this.gl = null;
@@ -74,24 +80,26 @@ class UltimateThemeEngine {
       return;
     }
     this.injectThemeBackground();
-    if (themeName === "starry") {
+    // External theme registry only
+    if (window.__themeRegistry && window.__themeRegistry.has(themeName)) {
+      var extTheme = window.__themeRegistry.get(themeName);
+      this._activeExternalTheme = extTheme;
       this.canvas.style.display = "none";
-      this.initStarryDOM();
+      var cfg = this.config[themeName] || extTheme.defaults || {};
+      extTheme.init(this.canvas, null, cfg);
+      console.log("[Ultimate] Using external theme: " + themeName);
       return;
     }
-    this.canvas.style.display = "block";
-    if (themeName === "vortex") {
-      this.gl = this.canvas.getContext("webgl", { antialias: false, alpha: true });
-      this.initWebGL();
-    } else {
-      this.ctx = this.canvas.getContext("2d");
-      if (themeName === "audio-reactive") this.setupAudioAnalysis();
-      if (themeName === "liquid") this.initLiquid();
-      if (themeName === "lofi") this.initLofi();
+    // Theme not yet loaded — mark as pending for retry when themes are injected
+    this._pendingTheme = themeName;
+    console.log("[Ultimate] Theme '" + themeName + "' pending — waiting for external themes to load...");
+  }
+  _onThemeRegistered(themeId) {
+    // Called when a new theme is registered — retry pending theme if it matches
+    if (this._pendingTheme && this._pendingTheme === themeId) {
+      console.log("[Ultimate] Pending theme '" + themeId + "' now available, applying...");
+      this.setTheme(this._pendingTheme);
     }
-    this.startTime = performance.now();
-    this.lastFrameTime = performance.now();
-    if (!this.isPaused) this.renderLoop(performance.now());
   }
   cleanupStarryDOM() {
     var old = document.getElementById("ultimate-starry-container");
@@ -114,30 +122,42 @@ class UltimateThemeEngine {
       // 2. Kill background-image ONLY on overlay/gradient containers
       "ytmusic-app,ytmusic-browse-response,ytmusic-section-list-renderer," +
       "ytmusic-immersive-header-renderer,ytmusic-header-renderer," +
-      "#browse-page,.background-gradient," +
+      "#browse-page," +
       "ytmusic-background-overlay-renderer{background-image:none!important}",
-      // 3. Quick Picks / carousel / shelf — force transparent
+      // 3. .background-gradient — THE Quick Picks background killer (full background, not just image)
+      ".background-gradient,.background-gradient.style-scope," +
+      "div.background-gradient.style-scope.ytmusic-browse-response," +
+      "ytmusic-browse-response .background-gradient{" +
+      "background:transparent!important;background-color:transparent!important;background-image:none!important;" +
+      "--ytmusic-background-overlay-background:transparent!important}",
+      // 4. ytmusic-background-overlay-renderer — nuke CSS var and direct background
+      "ytmusic-background-overlay-renderer{" +
+      "background:transparent!important;background-color:transparent!important;background-image:none!important;" +
+      "--ytmusic-background-overlay-background:transparent!important}",
+      // 5. Quick Picks / carousel / shelf — force transparent
       "ytmusic-carousel-shelf-renderer,ytmusic-carousel-shelf-renderer.fullbleed," +
       "ytmusic-shelf-renderer,.fullbleed," +
       "ytmusic-carousel-shelf-renderer .header-group," +
       "ytmusic-carousel-shelf-basic-header-renderer," +
-      "#browse-page #header,#browse-page #content,#browse-page #contents," +
+      "#browse-page #header,#browse-page #content,#browse-page #contents,#content-wrapper," +
       "ytmusic-tabbed-search-results-renderer,ytmusic-chip-cloud-renderer," +
       "ytmusic-single-column-browse-results-renderer{background:transparent!important;background-color:transparent!important;background-image:none!important}",
-      // 4. Restore OUR starry container gradient
+      // 6. Chip cloud gradient boxes
+      ".gradient-box.style-scope.ytmusic-chip-cloud-chip-renderer{background:transparent!important;background-image:none!important}",
+      // 7. Restore OUR starry container gradient
       "#ultimate-starry-container{background:var(--ut-bg)!important}",
-      // 5. Player bar: dark blur
+      // 8. Player bar: dark blur
       "ytmusic-player-bar{background:rgba(0,0,0,0.7)!important;backdrop-filter:blur(12px)!important}",
-      // 6. Nav bar
+      // 9. Nav bar
       "ytmusic-nav-bar{background:rgba(0,0,0,0.35)!important;backdrop-filter:blur(8px)!important}",
-      // 7. Hover states
+      // 10. Hover states
       "ytmusic-player-queue-item:hover,ytmusic-responsive-list-item-renderer:hover,tp-yt-paper-item:hover{background:rgba(255,255,255,0.06)!important}",
-      // 8. Protect thumbnails — never strip their sizing
+      // 11. Protect thumbnails — never strip their sizing
       "ytmusic-thumbnail-renderer img,yt-img-shadow img,#song-image img{max-width:100%!important;max-height:100%!important;object-fit:cover!important}",
       "ytmusic-thumbnail-renderer,yt-img-shadow,.image.ytmusic-carousel-shelf-basic-header-renderer{overflow:hidden!important}",
-      // 9. YTM CSS custom properties
+      // 12. YTM CSS custom properties
       "ytmusic-app{--ytmusic-general-background-a:transparent!important;--ytmusic-general-background-b:transparent!important;--ytmusic-general-background-c:transparent!important;--ytmusic-background:transparent!important;--ytmusic-color-black1:transparent!important;--ytmusic-color-black2:transparent!important;--ytmusic-color-black3:transparent!important;--ytmusic-color-black4:transparent!important}",
-      // 10. Hide YTM ad UI elements
+      // 13. Hide YTM ad UI elements
       "ytmusic-mealbar-promo-renderer{display:none!important}",
       "ytmusic-statement-banner-renderer{display:none!important}",
       ".ytmusic-promoted-sparkles-text-search-renderer{display:none!important}",
@@ -149,17 +169,67 @@ class UltimateThemeEngine {
     ].join("");
     document.head.appendChild(this.bgStyleEl);
 
-    // Periodically strip inline backgrounds + inject into shadow DOMs + skip ads
+    // Periodically strip inline backgrounds + inject into shadow DOMs
     var self = this;
+    this._bgNuking = false;
+    this._bgNukeQueued = false;
     this._bgInterval = setInterval(function() {
+      if (self._bgNuking) return;
+      self._bgNuking = true;
       self._stripInlineBackgrounds();
       self._injectShadowDOMStyles();
-    }, 1500);
-    // Ad skipper — much faster interval since ads need quick response
-    setTimeout(function() { self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 300);
-    setTimeout(function() { self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 1000);
-    setTimeout(function() { self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 3000);
-    setTimeout(function() { self._injectShadowDOMStyles(); }, 5000);
+      self._nukeQuickPicksBackground();
+      self._bgNuking = false;
+    }, 800);
+    // Early passes — catch backgrounds as they appear
+    [200, 500, 1000, 2000, 4000, 6000].forEach(function(ms) {
+      setTimeout(function() {
+        if (self._bgNuking) return;
+        self._bgNuking = true;
+        self._stripInlineBackgrounds();
+        self._injectShadowDOMStyles();
+        self._nukeQuickPicksBackground();
+        self._bgNuking = false;
+      }, ms);
+    });
+
+    // MutationObserver — catch YTM re-applying backgrounds in real time
+    // Uses re-entrancy guard + debounce to prevent infinite loop
+    // (our nuke modifies styles → triggers observer → which calls nuke again)
+    if (this._bgObserver) this._bgObserver.disconnect();
+    this._bgObserver = new MutationObserver(function(mutations) {
+      if (self._bgNuking) return; // Prevent infinite loop
+      var needsNuke = false;
+      for (var i = 0; i < mutations.length; i++) {
+        var m = mutations[i];
+        var tn = m.target && m.target.tagName ? m.target.tagName.toLowerCase() : "";
+        if (m.type === "attributes" && (m.attributeName === "style" || m.attributeName === "class")) {
+          if (tn === "ytmusic-browse-response" || tn === "ytmusic-immersive-header-renderer" ||
+              tn === "ytmusic-background-overlay-renderer" || tn === "ytmusic-header-renderer" ||
+              (m.target.classList && m.target.classList.contains("background-gradient"))) {
+            needsNuke = true;
+          }
+        }
+        if (m.type === "childList" && m.addedNodes.length > 0) {
+          needsNuke = true;
+        }
+      }
+      if (needsNuke && !self._bgNukeQueued) {
+        self._bgNukeQueued = true;
+        requestAnimationFrame(function() {
+          self._bgNuking = true;
+          self._nukeQuickPicksBackground();
+          self._bgNuking = false;
+          self._bgNukeQueued = false;
+        });
+      }
+    });
+    this._bgObserver.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class"]
+    });
 
     console.log("[Ultimate] Background transparency injected");
   }
@@ -183,7 +253,7 @@ class UltimateThemeEngine {
   _injectShadowDOMStyles() {
     // Inject transparency + slider restore into every shadow root
     var css = "*:not(#oneko):not(img):not(video):not(canvas):not(yt-img-shadow):not(.image){background-color:transparent!important}" +
-      ":host{background:transparent!important;background-color:transparent!important}" +
+      ":host{background:transparent!important;background-color:transparent!important;--ytmusic-background-overlay-background:transparent!important}" +
       "#sliderBar{background:rgba(255,255,255,0.2)!important;height:2px!important}" +
       "#progressContainer{background:rgba(255,255,255,0.2)!important}" +
       "#primaryProgress{background:#fff!important}" +
@@ -232,9 +302,15 @@ class UltimateThemeEngine {
       // Skip SVG elements
       if (el.tagName === "svg" || el.tagName === "SVG" || (el.closest && el.closest("svg"))) continue;
       var s = el.getAttribute("style") || "";
+      // Strip --ytmusic-background-overlay-background CSS var (Quick Picks overlay)
+      if (s.indexOf("--ytmusic-background-overlay-background") !== -1) {
+        el.style.setProperty("--ytmusic-background-overlay-background", "transparent", "important");
+        el.style.setProperty("background-color", "transparent", "important");
+        el.style.setProperty("background", "transparent", "important");
+      }
       if (s.indexOf("background") !== -1) {
-        // Don't touch elements with only CSS custom properties
-        if (s.indexOf("--") !== -1 && s.indexOf("background:") === -1 && s.indexOf("background-image:") === -1) continue;
+        // Don't touch elements with only CSS custom properties (except the overlay one we already handled)
+        if (s.indexOf("--") !== -1 && s.indexOf("--ytmusic-background-overlay-background") === -1 && s.indexOf("background:") === -1 && s.indexOf("background-image:") === -1) continue;
         // Don't touch elements that have background-size (likely thumbnails with bg-image)
         if (s.indexOf("background-size") !== -1 || s.indexOf("background-position") !== -1) continue;
         // Only strip background-color
@@ -247,6 +323,75 @@ class UltimateThemeEngine {
       }
     }
   }
+  _nukeQuickPicksBackground() {
+    // Direct DOM nuke — bypasses all CSS specificity issues
+    // 1. .background-gradient divs (the main culprit)
+    var grads = document.querySelectorAll(".background-gradient");
+    for (var i = 0; i < grads.length; i++) {
+      grads[i].style.setProperty("background", "transparent", "important");
+      grads[i].style.setProperty("background-color", "transparent", "important");
+      grads[i].style.setProperty("background-image", "none", "important");
+    }
+    // 2. ytmusic-background-overlay-renderer
+    var overlays = document.querySelectorAll("ytmusic-background-overlay-renderer");
+    for (var i = 0; i < overlays.length; i++) {
+      overlays[i].style.setProperty("background", "transparent", "important");
+      overlays[i].style.setProperty("background-color", "transparent", "important");
+      overlays[i].style.setProperty("background-image", "none", "important");
+      overlays[i].style.setProperty("--ytmusic-background-overlay-background", "transparent", "important");
+    }
+    // 3. #content-wrapper
+    var cw = document.querySelectorAll("#content-wrapper");
+    for (var i = 0; i < cw.length; i++) {
+      cw[i].style.setProperty("background", "transparent", "important");
+    }
+    // 4. ytmusic-browse-response
+    var br = document.querySelectorAll("ytmusic-browse-response");
+    for (var i = 0; i < br.length; i++) {
+      br[i].style.setProperty("background", "transparent", "important");
+      br[i].style.setProperty("background-image", "none", "important");
+    }
+    // 5. ytmusic-immersive-header-renderer — album/playlist hero gradient
+    var immHeaders = document.querySelectorAll("ytmusic-immersive-header-renderer");
+    for (var i = 0; i < immHeaders.length; i++) {
+      immHeaders[i].style.setProperty("background", "transparent", "important");
+      immHeaders[i].style.setProperty("background-color", "transparent", "important");
+      immHeaders[i].style.setProperty("background-image", "none", "important");
+      // Also nuke the gradient div inside immersive headers
+      var inner = immHeaders[i].querySelectorAll(".gradient-container, .background, [class*='gradient']");
+      for (var j = 0; j < inner.length; j++) {
+        inner[j].style.setProperty("background", "transparent", "important");
+        inner[j].style.setProperty("background-image", "none", "important");
+      }
+    }
+    // 6. ytmusic-header-renderer
+    var headers = document.querySelectorAll("ytmusic-header-renderer");
+    for (var i = 0; i < headers.length; i++) {
+      headers[i].style.setProperty("background", "transparent", "important");
+      headers[i].style.setProperty("background-image", "none", "important");
+    }
+    // 7. #header inside browse-response (dynamic gradient)
+    var browseHeaders = document.querySelectorAll("ytmusic-browse-response #header");
+    for (var i = 0; i < browseHeaders.length; i++) {
+      browseHeaders[i].style.setProperty("background", "transparent", "important");
+      browseHeaders[i].style.setProperty("background-image", "none", "important");
+    }
+    // 8. ytmusic-section-list-renderer — sometimes gets background
+    var slr = document.querySelectorAll("ytmusic-section-list-renderer");
+    for (var i = 0; i < slr.length; i++) {
+      slr[i].style.setProperty("background", "transparent", "important");
+      slr[i].style.setProperty("background-image", "none", "important");
+    }
+    // 9. Any element with inline gradient background (catch-all for YTM dynamic styles)
+    var gradEls = document.querySelectorAll('[style*="linear-gradient"]:not(#ultimate-starry-container):not(#oneko):not([style*="background-size"])');
+    for (var i = 0; i < gradEls.length; i++) {
+      var el = gradEls[i];
+      if (el.tagName === "IMG" || el.tagName === "VIDEO" || el.tagName === "CANVAS") continue;
+      if (el.id && el.id.indexOf("ultimate") === 0) continue;
+      el.style.setProperty("background", "transparent", "important");
+      el.style.setProperty("background-image", "none", "important");
+    }
+  }
   removeThemeBackground() {
     if (this._bgInterval) { clearInterval(this._bgInterval); this._bgInterval = null; }
     if (this._bgObserver) { this._bgObserver.disconnect(); this._bgObserver = null; }
@@ -257,304 +402,8 @@ class UltimateThemeEngine {
     this.cleanupStarryDOM();
     console.log("[Ultimate] Background transparency removed");
   }
-  renderLoop(timestamp) {
-    if (this.isPaused) return;
-    this.animationFrameId = requestAnimationFrame(this.renderLoop.bind(this));
-    var elapsed = timestamp - this.lastFrameTime;
-    var interval = 1000 / this.fpsLimit;
-    if (elapsed < interval) return;
-    this.lastFrameTime = timestamp - (elapsed % interval);
-    if (this.ctx) {
-      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      switch(this.currentTheme) {
-        case "audio-reactive": this.drawAudioReactive(); break;
-        case "liquid": this.drawLiquid(timestamp); break;
-        case "lofi": this.drawLofi(); break;
-        case "retro-crt": this.drawCRT(); break;
-      }
-    } else if (this.gl) {
-      if (this.currentTheme === "vortex") this.drawVortex(timestamp);
-    }
-  }
-  setupAudioAnalysis() {
-    if (!this.audioCtx) {
-      var vid = document.querySelector("video");
-      if (vid) {
-        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        this.analyser = this.audioCtx.createAnalyser();
-        this.analyser.fftSize = 256;
-        var src = this.audioCtx.createMediaElementSource(vid);
-        src.connect(this.analyser);
-        this.analyser.connect(this.audioCtx.destination);
-        this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-      }
-    }
-  }
-  hexToRgb(hex) {
-    var r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
-    return {r:r,g:g,b:b};
-  }
-  initStarryDOM() {
-    var c = this.config.starry;
-    var speed = c.animationSpeed || 1.0;
-    // Drift duration: speed 1 = 600s, speed 10 = 60s (very subtle)
-    var driftDuration = Math.max(30, Math.round(600 / speed));
-    var twinkleDur = Math.max(2, Math.round(5 / speed));
-    // Inject CSS
-    var style = document.createElement("style");
-    style.id = "ultimate-starry-css";
-    style.textContent = [
-      // Slow diagonal drift — stars move left and slightly up, then reset seamlessly
-      "@keyframes ut-sky-drift{0%{transform:translate(0,0)}100%{transform:translate(-25%,-8%)}}",
-      // Twinkle
-      "@keyframes ut-twinkle1{0%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}20%{box-shadow:0 0 0 0 transparent}60%{box-shadow:0 0 0 0 transparent}80%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}100%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}}",
-      "@keyframes ut-twinkle2{0%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}20%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}40%{box-shadow:0 0 0 0 transparent}80%{box-shadow:0 0 0 0 transparent}100%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}}",
-      "@keyframes ut-twinkle3{0%{box-shadow:0 0 0 0 transparent}20%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}60%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}80%{box-shadow:0 0 0 0 transparent}100%{box-shadow:0 0 0 0 transparent}}",
-      "@keyframes ut-twinkle4{0%{box-shadow:0 0 0 0 transparent}40%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}60%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}80%{box-shadow:0 0 8px 2px rgba(255,255,255,0.6)}100%{box-shadow:0 0 0 0 transparent}}",
-      // Shooting star
-      "@keyframes ut-shooting{0%{transform:rotate(315deg) translateX(0);opacity:1}70%{opacity:1}100%{transform:rotate(315deg) translateX(-1500px);opacity:0}}",
-      ".ut-shooting-star{position:absolute;width:4px;height:4px;background:#fff;border-radius:50%;animation:ut-shooting 3s linear;left:initial;z-index:2;box-shadow:0 0 0 4px rgba(255,255,255,0.1),0 0 0 8px rgba(255,255,255,0.1),0 0 20px rgba(255,255,255,0.1)}",
-      ".ut-shooting-star::before{content:'';position:absolute;top:50%;transform:translateY(-50%);width:300px;height:1px;background:linear-gradient(90deg,#fff,transparent)}",
-      "#ultimate-starry-container{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;overflow:hidden}"
-    ].join("");
-    document.head.appendChild(style);
-    // Outer container = gradient background via CSS var (restore rule uses --ut-bg)
-    var container = document.createElement("div");
-    container.id = "ultimate-starry-container";
-    var gradient = "linear-gradient(180deg," + (c.topColor || "#000000") + " 0%," + (c.bottomColor || "#142b44") + " 100%)";
-    container.style.setProperty("--ut-bg", gradient);
-    container.style.setProperty("background", gradient, "important");
-    document.body.insertBefore(container, document.body.firstChild);
-    // Drifting star field — oversized so drift doesn't show edges
-    var field = document.createElement("div");
-    field.style.cssText = "position:absolute;top:-15%;left:-5%;width:140%;height:130%;animation:ut-sky-drift "+driftDuration+"s linear infinite";
-    container.appendChild(field);
-    // Place ALL stars within the field (they'll all be visible since field covers viewport)
-    var count = c.starCount || 300;
-    for (var i = 0; i < count; i++) {
-      var size = Math.random() < 0.6 ? 1 : (Math.random() < 0.85 ? 2 : 3);
-      var star = document.createElement("div");
-      star.style.position = "absolute";
-      star.style.left = (Math.random() * 100).toFixed(2) + "%";
-      star.style.top = (Math.random() * 100).toFixed(2) + "%";
-      star.style.width = size + "px";
-      star.style.height = size + "px";
-      star.style.backgroundColor = "#fff";
-      star.style.borderRadius = "50%";
-      star.style.opacity = (0.4 + Math.random() * 0.6).toFixed(2);
-      if (Math.random() < 0.2) {
-        star.style.setProperty("animation", "ut-twinkle"+(Math.floor(Math.random()*4)+1)+" "+twinkleDur+"s infinite", "important");
-      }
-      field.appendChild(star);
-    }
-    // Shooting stars on the container (don't drift)
-    var ssCount = c.showShootingStars ? (c.shootingStarCount || 4) : 0;
-    for (var s = 0; s < ssCount; s++) this.createShootingStar(container);
-    console.log("[Ultimate] Starry: "+count+" stars, "+ssCount+" shooters, drift="+driftDuration+"s");
-  }
-  createShootingStar(container) {
-    var ss = document.createElement("span");
-    ss.className = "ut-shooting-star";
-    if (Math.random() < 0.75) {
-      ss.style.top = "-4px";
-      ss.style.right = (Math.random()*90)+"%";
-    } else {
-      ss.style.top = (Math.random()*50)+"%";
-      ss.style.right = "-4px";
-    }
-    ss.style.animationDuration = (Math.floor(Math.random()*3)+3)+"s";
-    ss.style.animationDelay = (Math.floor(Math.random()*7))+"s";
-    container.appendChild(ss);
-    ss.addEventListener("animationend", function() {
-      if (Math.random() < 0.75) {
-        ss.style.top = "-4px";
-        ss.style.right = (Math.random()*90)+"%";
-      } else {
-        ss.style.top = (Math.random()*50)+"%";
-        ss.style.right = "-4px";
-      }
-      ss.style.animation = "none";
-      void ss.offsetWidth;
-      ss.style.animation = "";
-      ss.style.animationDuration = (Math.floor(Math.random()*4)+3)+"s";
-    });
-  }
-  drawAudioReactive() {
-    if (!this.ctx || !this.analyser || !this.dataArray) return;
-    var c = this.config["audio-reactive"];
-    this.analyser.getByteFrequencyData(this.dataArray);
-    var w = this.canvas.width, h = this.canvas.height;
-    this.ctx.fillStyle = "#000000";
-    this.ctx.fillRect(0,0,w,h);
-    var sens = c.bassSensitivity;
-    var colors = c.colors && c.colors.length > 0 ? c.colors : ["#ff0055"];
-    if (c.shape === "circles") {
-      var cx = w/2, cy = h/2;
-      var step = Math.PI*2 / this.dataArray.length;
-      for (var i = 0; i < this.dataArray.length; i++) {
-        var val = (this.dataArray[i]/255) * sens;
-        var radius = 50 + val * (h*0.35);
-        var angle = i * step;
-        var x = cx + Math.cos(angle)*radius;
-        var y = cy + Math.sin(angle)*radius;
-        var ci = i % colors.length;
-        this.ctx.beginPath();
-        this.ctx.arc(x, y, Math.max(2, val*6), 0, Math.PI*2);
-        this.ctx.fillStyle = colors[ci];
-        this.ctx.fill();
-      }
-    } else {
-      var barW = (w / this.dataArray.length) * 2.5;
-      var bx = 0;
-      for (var i = 0; i < this.dataArray.length; i++) {
-        var barH = (this.dataArray[i]/255) * h * sens;
-        var ci = i % colors.length;
-        this.ctx.fillStyle = colors[ci];
-        this.ctx.fillRect(bx, h-barH, barW, barH);
-        bx += barW + 1;
-      }
-    }
-  }
-  initLiquid() {
-    this.blobs = [];
-    var c = this.config.liquid;
-    var cols = c.colors && c.colors.length >= 2 ? c.colors : ["#ff0055","#0044ff","#ffcc00"];
-    for (var i = 0; i < cols.length; i++) {
-      this.blobs.push({ x: Math.random()*this.canvas.width, y: Math.random()*this.canvas.height, vx: (Math.random()-0.5)*2, vy: (Math.random()-0.5)*2, radius: Math.random()*200+200, color: cols[i] });
-    }
-  }
-  drawLiquid(time) {
-    if (!this.ctx) return;
-    var c = this.config.liquid;
-    var w = this.canvas.width, h = this.canvas.height;
-    var spd = c.speed;
-    this.ctx.fillStyle = "#111";
-    this.ctx.fillRect(0,0,w,h);
-    this.ctx.filter = "blur("+c.blurIntensity+"px) contrast(2)";
-    for (var i = 0; i < this.blobs.length; i++) {
-      var b = this.blobs[i];
-      b.x += b.vx * spd;
-      b.y += b.vy * spd;
-      if (b.x < 0 || b.x > w) b.vx *= -1;
-      if (b.y < 0 || b.y > h) b.vy *= -1;
-      this.ctx.beginPath();
-      this.ctx.arc(b.x, b.y, b.radius, 0, Math.PI*2);
-      this.ctx.fillStyle = b.color;
-      this.ctx.fill();
-    }
-    this.ctx.filter = "none";
-  }
-  initLofi() {
-    this.weatherParticles = [];
-    for (var i = 0; i < 500; i++) {
-      this.weatherParticles.push({ x: Math.random()*this.canvas.width, y: Math.random()*this.canvas.height, vy: Math.random()*5+2, vx: Math.random()*2-1, size: Math.random()*2+1 });
-    }
-  }
-  drawLofi() {
-    if (!this.ctx) return;
-    var c = this.config.lofi;
-    var w = this.canvas.width, h = this.canvas.height;
-    var hour = new Date().getHours();
-    var isNight = c.forceTimeOfDay === "night" || (c.forceTimeOfDay === "auto" && (hour > 19 || hour < 7));
-    var isDay = c.forceTimeOfDay === "day" || (c.forceTimeOfDay === "auto" && !isNight);
-    this.ctx.fillStyle = isDay ? "#ffebd6" : "#0a0a1a";
-    this.ctx.fillRect(0,0,w,h);
-    var intensity = c.intensity;
-    var weather = c.weather;
-    if (weather === "rain") {
-      this.ctx.strokeStyle = "rgba(150,180,255,0.5)";
-      this.ctx.lineWidth = 1;
-      for (var i = 0; i < this.weatherParticles.length; i++) {
-        var p = this.weatherParticles[i];
-        p.y += p.vy * intensity * 2;
-        p.x += p.vx * 0.5;
-        if (p.y > h) { p.y = 0; p.x = Math.random()*w; }
-        this.ctx.beginPath();
-        this.ctx.moveTo(p.x, p.y);
-        this.ctx.lineTo(p.x - 1, p.y + p.size*5);
-        this.ctx.stroke();
-      }
-    } else if (weather === "snow") {
-      this.ctx.fillStyle = "rgba(255,255,255,0.8)";
-      for (var i = 0; i < this.weatherParticles.length; i++) {
-        var p = this.weatherParticles[i];
-        p.y += p.vy * intensity * 0.3;
-        p.x += Math.sin(p.y * 0.01) * 0.5;
-        if (p.y > h) { p.y = 0; p.x = Math.random()*w; }
-        this.ctx.beginPath();
-        this.ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
-        this.ctx.fill();
-      }
-    }
-  }
-  drawCRT() {
-    if (!this.ctx) return;
-    var c = this.config["retro-crt"];
-    var w = this.canvas.width, h = this.canvas.height;
-    this.ctx.clearRect(0,0,w,h);
-    this.ctx.fillStyle = "rgba(0,0,0,"+c.scanlineOpacity+")";
-    for (var i = 0; i < h; i += 4) this.ctx.fillRect(0,i,w,2);
-    if (Math.random() < c.glitchIntensity) {
-      this.ctx.fillStyle = "rgba(255,255,255,"+(Math.random()*0.15)+")";
-      this.ctx.fillRect(0, Math.random()*h, w, Math.random()*50+10);
-    }
-    if (c.distortion > 0) {
-      this.ctx.fillStyle = "rgba(255,0,0,"+(c.distortion*0.1)+")";
-      this.ctx.fillRect(2,0,w,h);
-      this.ctx.fillStyle = "rgba(0,255,255,"+(c.distortion*0.1)+")";
-      this.ctx.fillRect(-2,0,w,h);
-    }
-    var grad = this.ctx.createRadialGradient(w/2,h/2,h/4,w/2,h/2,w);
-    grad.addColorStop(0,"transparent");
-    grad.addColorStop(1,"rgba(0,0,0,0.8)");
-    this.ctx.fillStyle = grad;
-    this.ctx.fillRect(0,0,w,h);
-  }
-  initWebGL() {
-    if (!this.gl) return;
-    var gl = this.gl;
-    var vs = "attribute vec2 position; void main(){gl_Position=vec4(position,0.0,1.0);}";
-    var fs = "precision highp float;uniform vec2 u_res;uniform float u_time;uniform vec3 u_col;uniform float u_speed;uniform float u_rot;" +
-      "void main(){vec2 p=(gl_FragCoord.xy*2.0-u_res)/min(u_res.x,u_res.y);" +
-      "float a=atan(p.y,p.x)+u_rot*u_time*0.1;float r=length(p);" +
-      "float u=1.0/r+u_time*u_speed;float v=a/3.14159;" +
-      "float tex=sin(u*10.0)*sin(v*10.0);" +
-      "vec3 col=u_col*tex*r;gl_FragColor=vec4(col,1.0);}";
-    var compile = function(type, src) {
-      var s = gl.createShader(type);
-      if (!s) return null;
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      return s;
-    };
-    var vShader = compile(gl.VERTEX_SHADER, vs);
-    var fShader = compile(gl.FRAGMENT_SHADER, fs);
-    this.shaderProgram = gl.createProgram();
-    if (!this.shaderProgram || !vShader || !fShader) return;
-    gl.attachShader(this.shaderProgram, vShader);
-    gl.attachShader(this.shaderProgram, fShader);
-    gl.linkProgram(this.shaderProgram);
-    var buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
-  }
-  drawVortex(time) {
-    if (!this.gl || !this.shaderProgram) return;
-    var gl = this.gl;
-    var c = this.config.vortex;
-    var col = this.hexToRgb(c.color);
-    var t = (time - this.startTime) * 0.001;
-    gl.useProgram(this.shaderProgram);
-    var pos = gl.getAttribLocation(this.shaderProgram, "position");
-    gl.enableVertexAttribArray(pos);
-    gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
-    gl.uniform2f(gl.getUniformLocation(this.shaderProgram,"u_res"), this.canvas.width, this.canvas.height);
-    gl.uniform1f(gl.getUniformLocation(this.shaderProgram,"u_time"), t);
-    gl.uniform1f(gl.getUniformLocation(this.shaderProgram,"u_speed"), c.speed);
-    gl.uniform1f(gl.getUniformLocation(this.shaderProgram,"u_rot"), c.cameraRotation);
-    gl.uniform3f(gl.getUniformLocation(this.shaderProgram,"u_col"), col.r/255, col.g/255, col.b/255);
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  }
+  // All theme renderers are now external .theme.js files
+  // No built-in rendering code — themes register via window.__themeRegistry
 }
 
 class UltimateUIInjector {
@@ -621,6 +470,32 @@ class UltimateUIInjector {
 }
 
 (function() {
+  // Theme registry — external .theme.js files register here
+  if (!window.__themeRegistry) {
+    window.__themeRegistry = {
+      _themes: {},
+      register: function(theme) {
+        this._themes[theme.id] = theme;
+        console.log("[ThemeRegistry] Registered theme: " + theme.id + " (" + theme.name + ")");
+        // Notify engine of new theme (for pending theme retry)
+        if (window.__ultimateTheme && window.__ultimateTheme._onThemeRegistered) {
+          window.__ultimateTheme._onThemeRegistered(theme.id);
+        }
+      },
+      get: function(id) { return this._themes[id] || null; },
+      list: function() {
+        var result = [];
+        for (var k in this._themes) {
+          var t = this._themes[k];
+          result.push({ id: t.id, name: t.name, schema: t.schema || [], defaults: t.defaults || {} });
+        }
+        return result;
+      },
+      has: function(id) { return !!this._themes[id]; }
+    };
+    console.log("[Ultimate] Theme registry created");
+  }
+
   // Install ad blocker hooks IMMEDIATELY — before anything else loads
   if (!window._utAdBlockInstalled) {
     // Hook fetch
@@ -683,4 +558,5 @@ class UltimateUIInjector {
   new UltimateUIInjector();
   window.__ultimateTheme = new UltimateThemeEngine();
   console.log("[Ultimate] Theme engine ready, canvas injected.");
+  console.log("[Ultimate] External themes available: " + window.__themeRegistry.list().map(function(t) { return t.id; }).join(", ") || "(none yet — loaded after page navigation)");
 })();
