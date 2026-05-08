@@ -108,29 +108,89 @@ class UltimateThemeEngine {
     this.bgStyleEl = document.createElement("style");
     this.bgStyleEl.id = "ultimate-theme-bg";
     this.bgStyleEl.textContent = [
-      // 1. Kill ALL backgrounds everywhere
-      "html,body,ytmusic-app,ytmusic-app *{background:transparent!important;background-color:transparent!important;background-image:none!important}",
-      // 2. Restore OUR starry container gradient (set in initStarryDOM via inline style)
+      // 1. Kill backgrounds — use background-color only (not shorthand) to preserve extension sprites
+      "html,body,ytmusic-app{background-color:transparent!important;background-image:none!important}",
+      "ytmusic-app *:not(#oneko):not(img):not(video):not(canvas){background-color:transparent!important}",
+      // 2. Kill background-image on YTM-specific elements (gradients, overlays)
+      "ytmusic-browse-response,ytmusic-browse-response *:not(img)," +
+      "ytmusic-section-list-renderer,ytmusic-section-list-renderer *:not(img)," +
+      "ytmusic-shelf-renderer,ytmusic-carousel-shelf-renderer," +
+      "ytmusic-immersive-header-renderer,ytmusic-header-renderer," +
+      "ytmusic-tabbed-search-results-renderer,ytmusic-chip-cloud-renderer," +
+      "#browse-page,#content,#contents,#header," +
+      ".fullbleed,.background-gradient," +
+      "ytmusic-background-overlay-renderer{background-image:none!important;background:transparent!important}",
+      // 3. Restore OUR starry container gradient
       "#ultimate-starry-container{background:var(--ut-bg)!important}",
-      // 3. Player bar: dark blur for readability
+      // 4. Player bar: dark blur for readability
       "ytmusic-player-bar{background:rgba(0,0,0,0.7)!important;backdrop-filter:blur(12px)!important}",
-      // 4. Nav bar: slightly transparent
+      // 5. Nav bar
       "ytmusic-nav-bar{background:rgba(0,0,0,0.35)!important;backdrop-filter:blur(8px)!important}",
-      // 5. Hover states
+      // 6. Hover states
       "ytmusic-player-queue-item:hover,ytmusic-responsive-list-item-renderer:hover,tp-yt-paper-item:hover{background:rgba(255,255,255,0.06)!important}",
-      // 6. YTM CSS custom properties
-      "ytmusic-app{--ytmusic-general-background-a:transparent!important;--ytmusic-general-background-b:transparent!important;--ytmusic-general-background-c:transparent!important;--ytmusic-background:transparent!important;--ytmusic-color-black1:transparent!important;--ytmusic-color-black2:transparent!important;--ytmusic-color-black3:transparent!important;--ytmusic-color-black4:transparent!important}"
+      // 7. Neko cat — protect extension elements
+      "#oneko{background-image:var(--oneko-bg)!important}",
+      // 8. YTM CSS custom properties
+      "ytmusic-app{--ytmusic-general-background-a:transparent!important;--ytmusic-general-background-b:transparent!important;--ytmusic-general-background-c:transparent!important;--ytmusic-background:transparent!important;--ytmusic-color-black1:transparent!important;--ytmusic-color-black2:transparent!important;--ytmusic-color-black3:transparent!important;--ytmusic-color-black4:transparent!important}",
+      // 9. Hide YTM ads
+      "ytmusic-mealbar-promo-renderer{display:none!important}",
+      "ytmusic-statement-banner-renderer{display:none!important}",
+      ".ytmusic-promoted-sparkles-text-search-renderer{display:none!important}",
+      "ytmusic-rich-grid-media-ad-renderer{display:none!important}",
+      "#masthead-ad{display:none!important}",
+      ".ad-showing .html5-video-container{display:none!important}",
+      ".ytp-ad-module{display:none!important}",
+      ".ytp-ad-overlay-container{display:none!important}",
+      "tp-yt-paper-dialog.ytmusic-popup-container{display:none!important}"
     ].join("");
     document.head.appendChild(this.bgStyleEl);
 
-    // Periodically strip inline backgrounds from YTM elements
+    // Periodically strip inline backgrounds + inject into shadow DOMs
     var self = this;
-    this._bgInterval = setInterval(function() { self._stripInlineBackgrounds(); }, 1500);
-    setTimeout(function() { self._stripInlineBackgrounds(); }, 300);
-    setTimeout(function() { self._stripInlineBackgrounds(); }, 1000);
-    setTimeout(function() { self._stripInlineBackgrounds(); }, 3000);
+    this._bgInterval = setInterval(function() {
+      self._stripInlineBackgrounds();
+      self._injectShadowDOMStyles();
+    }, 1500);
+    setTimeout(function() { self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 300);
+    setTimeout(function() { self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 1000);
+    setTimeout(function() { self._stripInlineBackgrounds(); self._injectShadowDOMStyles(); }, 3000);
+    setTimeout(function() { self._injectShadowDOMStyles(); }, 5000);
 
-    console.log("[Ultimate] Background transparency injected");
+    console.log("[Ultimate] Background transparency + ad hide injected");
+  }
+  _injectShadowDOMStyles() {
+    // Inject transparency + slider restore into every shadow root
+    var css = "*:not(#oneko):not(img):not(video):not(canvas){background-color:transparent!important}" +
+      "#sliderBar{background:rgba(255,255,255,0.2)!important;height:2px!important}" +
+      "#progressContainer{background:rgba(255,255,255,0.2)!important}" +
+      "#primaryProgress{background:#fff!important}" +
+      "#secondaryProgress{background:rgba(255,255,255,0.15)!important}" +
+      ".slider-knob-inner{background:#fff!important}" +
+      "#sliderKnob{background:transparent!important}";
+    this._walkShadowRoots(document.body, css);
+  }
+  _walkShadowRoots(root, css) {
+    // Recursively walk DOM and shadow roots
+    var children = root.children || root.childNodes;
+    if (!children) return;
+    for (var i = 0; i < children.length; i++) {
+      var el = children[i];
+      if (!el || !el.tagName) continue;
+      if (el.id && el.id.indexOf("ultimate") === 0) continue;
+      if (el.shadowRoot && !el.shadowRoot._utInjected) {
+        var s = document.createElement("style");
+        s.setAttribute("data-ut", "shadow-bg");
+        s.textContent = css;
+        el.shadowRoot.appendChild(s);
+        el.shadowRoot._utInjected = true;
+        // Also walk inside this shadow root
+        this._walkShadowRoots(el.shadowRoot, css);
+      }
+      // Recurse into children
+      if (el.children && el.children.length > 0) {
+        this._walkShadowRoots(el, css);
+      }
+    }
   }
   _stripInlineBackgrounds() {
     var els = document.querySelectorAll("[style]");
@@ -139,15 +199,27 @@ class UltimateThemeEngine {
       // Skip our own theme elements
       if (el.id && el.id.indexOf("ultimate") === 0) continue;
       if (el.closest && el.closest("#ultimate-starry-container")) continue;
-      // Skip SVG elements (they use style for fill/display)
-      if (el.tagName === "svg" || el.tagName === "SVG" || el.closest("svg")) continue;
+      // Skip neko cat and chrome extension elements
+      if (el.id === "oneko") continue;
+      if (el.tagName === "IMG" || el.tagName === "VIDEO" || el.tagName === "CANVAS") continue;
+      // Skip SVG elements
+      if (el.tagName === "svg" || el.tagName === "SVG" || (el.closest && el.closest("svg"))) continue;
       var s = el.getAttribute("style") || "";
       if (s.indexOf("background") !== -1) {
-        // Don't touch CSS custom properties (--ytmusic-play-button-* etc)
+        // Don't touch elements with only CSS custom properties
         if (s.indexOf("--") !== -1 && s.indexOf("background:") === -1 && s.indexOf("background-image:") === -1) continue;
-        el.style.setProperty("background", "transparent", "important");
-        el.style.setProperty("background-image", "none", "important");
+        // Only strip background-color and background (leave background-image for extensions)
         el.style.setProperty("background-color", "transparent", "important");
+        // Strip background-image only if it's a gradient (YTM overlays)
+        var bgImg = el.style.backgroundImage || "";
+        if (bgImg.indexOf("gradient") !== -1) {
+          el.style.setProperty("background-image", "none", "important");
+        }
+        // Strip shorthand background only if it contains gradient
+        var bg = el.style.background || "";
+        if (bg.indexOf("gradient") !== -1 || bg.indexOf("rgb") !== -1) {
+          el.style.setProperty("background", "transparent", "important");
+        }
       }
     }
   }

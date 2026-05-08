@@ -25,6 +25,7 @@ import fs from "fs/promises";
 import electronSquirrelStartup from "electron-squirrel-startup";
 
 import { UltimateCoreManager } from "./ultimate/CoreManager";
+import { ExtensionManager } from "./ultimate/ExtensionManager";
 import MemoryStore from "./memory-store";
 import playerStateStore, { PlayerState, VideoState } from "./player-state-store";
 import { MemoryStoreSchema, StoreSchema, TrayIconStyle } from "../shared/store/schema";
@@ -1334,6 +1335,16 @@ app.on("ready", async () => {
     map[obj.name] = obj.script;
     return map;
   }, {});
+
+  // Pre-load extensions into session BEFORE the page navigates
+  // Chrome content scripts only inject on page load, so they must be registered first
+  try {
+    const preExtMgr = new ExtensionManager();
+    await preExtMgr.loadSavedExtensions();
+    log.info("Extensions pre-loaded into session before page navigation");
+  } catch (e) {
+    log.error("Extension pre-load failed", e);
+  }
 
   createYTMView();
   setupTaskbarFeatures();

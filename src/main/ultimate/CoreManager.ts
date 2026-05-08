@@ -1,4 +1,4 @@
-import { app, BrowserWindow, BrowserView, ipcMain } from "electron";
+import { app, BrowserWindow, BrowserView, ipcMain, session } from "electron";
 import log from "electron-log";
 import { ExtensionManager } from "./ExtensionManager";
 import { DownloadManager } from "./DownloadManager";
@@ -31,10 +31,37 @@ export class UltimateCoreManager {
 
     this.setupOptimizations();
     this.setupIPC();
+    this.setupAdBlocker();
 
-    // Load extensions immediately — content scripts need to be registered
-    // BEFORE the page loads, otherwise they won't inject
-    this.extensionManager.loadSavedExtensions();
+    // Extensions are pre-loaded in index.ts BEFORE createYTMView()
+    // No need to load them again here
+
+    // Debug: check if content scripts injected after page loads
+    setTimeout(() => {
+      const partition = app.isPackaged ? "persist:ytmview" : "persist:ytmview-dev";
+      const ses = session.fromPartition(partition);
+      const loadedExts = ses.getAllExtensions();
+      log.info(`UltimateCoreManager: Session has ${loadedExts.length} extensions loaded: ${loadedExts.map(e => e.name).join(", ")}`);
+
+      if (this.ytmView && this.ytmView.webContents) {
+        this.ytmView.webContents.executeJavaScript(`
+          (function() {
+            var oneko = document.getElementById("oneko");
+            var scripts = document.querySelectorAll("script[src*='chrome-extension']");
+            return {
+              nekoExists: !!oneko,
+              nekoStyle: oneko ? oneko.style.cssText : "N/A",
+              extScripts: scripts.length,
+              bodyChildren: document.body.children.length
+            };
+          })()
+        `).then((result: any) => {
+          log.info("UltimateCoreManager: Extension check:", JSON.stringify(result));
+        }).catch((e: Error) => {
+          log.error("UltimateCoreManager: Extension check failed:", e.message);
+        });
+      }
+    }, 10000);
 
     log.info("UltimateCoreManager: Initialized");
   }
@@ -63,6 +90,44 @@ export class UltimateCoreManager {
         try { this.ytmView.webContents.send("ultimate:app-state", { state: "minimized" }); } catch {}
       }
     });
+  }
+
+  private setupAdBlocker(): void {
+    const partition = app.isPackaged ? "persist:ytmview" : "persist:ytmview-dev";
+    const ses = session.fromPartition(partition);
+
+    const adPatterns = [
+      /\/pagead\//,
+      /\/ptracking\?/,
+      /\/api\/stats\/ads/,
+      /\/ads\/watch\//,
+      /\/pcs\/activeview/,
+      /\/pagead\/adview/,
+      /doubleclick\.net/,
+      /googlesyndication\.com/,
+      /googleadservices\.com/,
+      /\/get_midroll_/,
+      /\/ad_break/,
+      /\/api\/stats\/qoe\?.*adformat/,
+      /\/youtubei\/v1\/player\/ad_break/,
+      /\/generate_204\?.*ad/,
+      /\.googlevideo\.com\/.*&ctier=L&/,
+      /&ad_type=/,
+      /\/log_interaction\?.*ad/,
+    ];
+
+    ses.webRequest.onBeforeRequest({ urls: ["*://*.youtube.com/*", "*://*.googlevideo.com/*", "*://*.doubleclick.net/*", "*://*.googlesyndication.com/*", "*://*.googleadservices.com/*"] }, (details, callback) => {
+      const url = details.url;
+      for (const pattern of adPatterns) {
+        if (pattern.test(url)) {
+          callback({ cancel: true });
+          return;
+        }
+      }
+      callback({});
+    });
+
+    log.info("UltimateCoreManager: Ad blocker active");
   }
 
   private setupIPC(): void {
