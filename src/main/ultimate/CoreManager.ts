@@ -1,0 +1,102 @@
+import { app, BrowserWindow, BrowserView, ipcMain } from "electron";
+import log from "electron-log";
+import { ExtensionManager } from "./ExtensionManager";
+import { DownloadManager } from "./DownloadManager";
+import { ThemeConfig } from "../../shared/store/schema";
+
+const DEFAULT_THEME_CONFIG: ThemeConfig = {
+  starry: { topColor: "#000000", bottomColor: "#142b44", starCount: 300, shootingStarCount: 4, showShootingStars: true, animationSpeed: 1.0 },
+  "audio-reactive": { bassSensitivity: 1.5, colors: ["#ff0055", "#0044ff", "#ffcc00"], shape: "bars" },
+  liquid: { colors: ["#ff0055", "#0044ff", "#ffcc00"], speed: 1.0, blurIntensity: 40 },
+  lofi: { weather: "rain", intensity: 1.0, forceTimeOfDay: "auto" },
+  "retro-crt": { scanlineOpacity: 0.3, glitchIntensity: 0.05, distortion: 0.0 },
+  vortex: { speed: 1.0, color: "#00ffff", cameraRotation: 0.0 }
+};
+
+export { DEFAULT_THEME_CONFIG };
+
+export class UltimateCoreManager {
+  private mainWindow: BrowserWindow;
+  private ytmView: BrowserView;
+  public extensionManager: ExtensionManager;
+  public downloadManager: DownloadManager;
+
+  constructor(window: BrowserWindow, view: BrowserView) {
+    this.mainWindow = window;
+    this.ytmView = view;
+
+    this.extensionManager = new ExtensionManager();
+    this.downloadManager = new DownloadManager();
+    this.downloadManager.setView(view);
+
+    this.setupOptimizations();
+    this.setupIPC();
+
+    // Load extensions immediately — content scripts need to be registered
+    // BEFORE the page loads, otherwise they won't inject
+    this.extensionManager.loadSavedExtensions();
+
+    log.info("UltimateCoreManager: Initialized");
+  }
+
+  private setupOptimizations(): void {
+    app.commandLine.appendSwitch("disable-renderer-backgrounding");
+    app.commandLine.appendSwitch("disable-audio-output-resampler");
+    app.commandLine.appendSwitch("enable-gpu-rasterization");
+    app.commandLine.appendSwitch("enable-zero-copy");
+
+    this.mainWindow.on("blur", () => {
+      if (this.ytmView) {
+        try { this.ytmView.webContents.send("ultimate:app-state", { state: "background" }); } catch {}
+      }
+      if (global.gc) global.gc();
+    });
+
+    this.mainWindow.on("focus", () => {
+      if (this.ytmView) {
+        try { this.ytmView.webContents.send("ultimate:app-state", { state: "foreground" }); } catch {}
+      }
+    });
+
+    this.mainWindow.on("minimize", () => {
+      if (this.ytmView) {
+        try { this.ytmView.webContents.send("ultimate:app-state", { state: "minimized" }); } catch {}
+      }
+    });
+  }
+
+  private setupIPC(): void {
+    ipcMain.handle("ultimate:list-extensions", async () => {
+      return this.extensionManager.listExtensions();
+    });
+
+    ipcMain.handle("ultimate:load-extension", async (_event, extPath: string) => {
+      return this.extensionManager.loadExtension(extPath);
+    });
+
+    ipcMain.handle("ultimate:remove-extension", async (_event, id: string) => {
+      return this.extensionManager.removeExtension(id);
+    });
+
+    // Live toggle: actually loads/unloads the extension in real-time
+    ipcMain.handle("ultimate:toggle-extension", async (_event, id: string, enabled: boolean) => {
+      if (enabled) {
+        return this.extensionManager.enableExtension(id);
+      } else {
+        return this.extensionManager.disableExtension(id);
+      }
+    });
+
+    ipcMain.handle("ultimate:get-default-theme-config", async () => {
+      return DEFAULT_THEME_CONFIG;
+    });
+
+    ipcMain.handle("ultimate:open-extension-options", async (_event, id: string) => {
+      return this.extensionManager.openExtensionOptions(id);
+    });
+  }
+
+  public destroy(): void {
+    this.downloadManager.destroy();
+  }
+}
