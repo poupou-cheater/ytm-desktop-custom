@@ -41,31 +41,47 @@ const ultimateStored = await store.get("ultimate") as any;
 const ultimateOpacity = ref<number>(ultimateStored?.opacity ?? 1);
 const ultimateTheme = ref<string>(ultimateStored?.theme ?? "none");
 
-const defaultThemeConfig = (await (window as any).ytmd.getDefaultThemeConfig()) || {};
 const storedThemeConfig = ultimateStored?.themeConfig || {};
-// Deep merge: for each theme key, merge stored values over defaults
-const mergedThemeConfig: any = {};
-const defKeys = defaultThemeConfig ? Object.keys(defaultThemeConfig) : [];
-for (const key of defKeys) {
-  mergedThemeConfig[key] = { ...(defaultThemeConfig[key] || {}), ...(storedThemeConfig[key] || {}) };
-}
-const stoKeys = storedThemeConfig ? Object.keys(storedThemeConfig) : [];
-for (const key of stoKeys) {
-  if (!mergedThemeConfig[key]) mergedThemeConfig[key] = storedThemeConfig[key];
-}
-
-const themeConfig = ref<any>(mergedThemeConfig);
+const themeConfig = ref<any>({ ...storedThemeConfig });
 const extensions = ref<any[]>([]);
+const availableThemes = ref<any[]>([]);
+
+/**
+ * Scan .theme.js files from disk, extract metadata (id, name, defaults, schema).
+ * Merge defaults into themeConfig for any new themes found.
+ */
+async function scanThemes() {
+  try {
+    const themes = await (window as any).ytmd.scanThemes();
+    availableThemes.value = themes;
+
+    // Merge defaults for any newly discovered theme
+    let changed = false;
+    for (const theme of themes) {
+      if (theme.defaults && !themeConfig.value[theme.id]) {
+        themeConfig.value[theme.id] = JSON.parse(JSON.stringify(theme.defaults));
+        changed = true;
+      }
+    }
+    if (changed) {
+      themeConfigChanged();
+    }
+  } catch (e) {
+    console.error("Failed to scan themes", e);
+    availableThemes.value = [];
+  }
+}
 
 // Sync initial values to memoryStore so the preload relay picks them up
 memoryStore.set("ultimateOpacity", ultimateOpacity.value);
 memoryStore.set("ultimateTheme", ultimateTheme.value);
-memoryStore.set("ultimateThemeConfig", JSON.parse(JSON.stringify(mergedThemeConfig)));
+memoryStore.set("ultimateThemeConfig", JSON.parse(JSON.stringify(themeConfig.value)));
 
 async function loadExtensionList() {
   try { extensions.value = await (window as any).ytmd.listExtensions(); } catch { extensions.value = []; }
 }
 loadExtensionList();
+scanThemes();
 
 async function ultimateSettingsChanged() {
   const cfg = JSON.parse(JSON.stringify(themeConfig.value));
@@ -127,16 +143,16 @@ async function openExtensionOptions(id: string) {
   await (window as any).ytmd.openExtensionOptions(id);
 }
 
-function addThemeColor(themeKey: string) {
-  if (themeConfig.value[themeKey] && themeConfig.value[themeKey].colors && themeConfig.value[themeKey].colors.length < 4) {
-    themeConfig.value[themeKey].colors.push("#ffffff");
+function addThemeColor(themeKey: string, fieldKey: string = "colors") {
+  if (themeConfig.value[themeKey] && themeConfig.value[themeKey][fieldKey] && themeConfig.value[themeKey][fieldKey].length < 4) {
+    themeConfig.value[themeKey][fieldKey].push("#ffffff");
     themeConfigChanged();
   }
 }
 
-function removeThemeColor(themeKey: string, index: number) {
-  if (themeConfig.value[themeKey] && themeConfig.value[themeKey].colors && themeConfig.value[themeKey].colors.length > 2) {
-    themeConfig.value[themeKey].colors.splice(index, 1);
+function removeThemeColor(themeKey: string, index: number, fieldKey: string = "colors") {
+  if (themeConfig.value[themeKey] && themeConfig.value[themeKey][fieldKey] && themeConfig.value[themeKey][fieldKey].length > 2) {
+    themeConfig.value[themeKey][fieldKey].splice(index, 1);
     themeConfigChanged();
   }
 }
@@ -314,6 +330,9 @@ function removeCustomCSSPath() {
 }
 function changeTab(newTab: number) {
   currentTab.value = newTab;
+  if (newTab === 6) {
+    scanThemes();
+  }
 }
 function restartApplication() {
   window.ytmd.restartApplication();
@@ -330,6 +349,9 @@ async function logoutLastFM() {
   lastFMEnabled.value = false;
   lastFMSessionKey.value = null;
   await settingsChanged();
+}
+async function openThemesDir() {
+  await window.ytmd.openThemesDir();
 }
 
 window.ytmd.handleCheckingForUpdate(() => {
@@ -362,9 +384,7 @@ window.ytmd.handleUpdateDownloaded(() => {
         <li :class="{ active: currentTab === 3 }" @click="changeTab(3)"><span class="material-symbols-outlined">music_note</span>Playback</li>
         <li :class="{ active: currentTab === 4 }" @click="changeTab(4)"><span class="material-symbols-outlined">wifi_tethering</span>Integrations</li>
         <li :class="{ active: currentTab === 5 }" @click="changeTab(5)"><span class="material-symbols-outlined">keyboard</span>Shortcuts</li>
-        <li :class="{ active: currentTab === 6 }" @click="changeTab(6)" style="color: #00e676; font-weight: bold">
-          <span class="material-symbols-outlined" style="color: #00e676">bolt</span>Ultimate
-        </li>
+        <li :class="{ active: currentTab === 6 }" @click="changeTab(6)" class="nova-sidebar"><span class="material-symbols-outlined nova-sidebar-ic">auto_awesome</span>NOVA</li>
         <span class="push"></span>
         <li :class="{ active: currentTab === 99 }" @click="changeTab(99)"><span class="material-symbols-outlined">info</span>About</li>
       </ul>
@@ -577,60 +597,38 @@ window.ytmd.handleUpdateDownloaded(() => {
           </div>
         </div>
 
-        <div v-if="currentTab === 6" class="ultimate-tab" style="padding: 10px; overflow-y: auto">
-          <h2 style="color: #00e676; margin-bottom: 20px">⚡ Paramètres Ultimate</h2>
-          <div class="u-section"><p class="u-label">Opacité: {{ ultimateOpacity }}</p><input type="range" min="0.1" max="1" step="0.05" v-model="ultimateOpacity" @input="ultimateSettingsChanged" class="u-range" /></div>
-          <div class="u-section"><p class="u-label">Thème</p>
-            <select v-model="ultimateTheme" @change="ultimateSettingsChanged" class="u-select">
-              <option value="none">Désactivé</option><option value="starry">🌌 Nuit Étoilée</option><option value="audio-reactive">🎵 Audio-Réactif</option>
-              <option value="liquid">🫧 Liquid Gradient</option><option value="lofi">☕ Lo-Fi</option><option value="retro-crt">📺 Rétro CRT</option><option value="vortex">🌀 Vortex 3D</option>
-            </select>
-          </div>
-          <div v-if="ultimateTheme==='starry'&&themeConfig.starry" class="u-config"><h3 class="u-config-title">🌌 Nuit Étoilée</h3>
-            <div class="u-row"><span>Couleur haut (ciel)</span><input type="color" v-model="themeConfig.starry.topColor" @input="themeConfigChanged"/></div>
-            <div class="u-row"><span>Couleur bas (horizon)</span><input type="color" v-model="themeConfig.starry.bottomColor" @input="themeConfigChanged"/></div>
-            <div class="u-row"><span>Nombre d'étoiles: {{themeConfig.starry.starCount}}</span><input type="range" min="50" max="5000" step="50" v-model.number="themeConfig.starry.starCount" @input="themeConfigChanged" class="u-range"/></div>
-            <div class="u-row"><span>Étoiles filantes</span><input type="checkbox" v-model="themeConfig.starry.showShootingStars" @change="themeConfigChanged"/></div>
-            <div class="u-row"><span>Nombre étoiles filantes: {{themeConfig.starry.shootingStarCount}}</span><input type="range" min="1" max="30" step="1" v-model.number="themeConfig.starry.shootingStarCount" @input="themeConfigChanged" class="u-range"/></div>
-            <div class="u-row"><span>Vitesse rotation: {{themeConfig.starry.animationSpeed}}</span><input type="range" min="0.1" max="10" step="0.1" v-model.number="themeConfig.starry.animationSpeed" @input="themeConfigChanged" class="u-range"/></div>
-          </div>
-          <div v-if="ultimateTheme==='audio-reactive'&&themeConfig['audio-reactive']" class="u-config"><h3 class="u-config-title">🎵 Audio-Réactif</h3>
-            <div class="u-row"><span>Sensibilité: {{themeConfig['audio-reactive'].bassSensitivity}}</span><input type="range" min="0.1" max="3" step="0.1" v-model.number="themeConfig['audio-reactive'].bassSensitivity" @input="themeConfigChanged" class="u-range"/></div>
-            <div class="u-row"><span>Forme</span><select v-model="themeConfig['audio-reactive'].shape" @change="themeConfigChanged" class="u-select-sm"><option value="bars">Barres</option><option value="circles">Cercles</option></select></div>
-            <div class="u-row" v-for="(c,i) in themeConfig['audio-reactive'].colors" :key="'ar-'+i"><span>Couleur {{i+1}}</span><input type="color" :value="c" @input="themeConfig['audio-reactive'].colors[i]=($event.target as HTMLInputElement).value;themeConfigChanged()"/><button v-if="themeConfig['audio-reactive'].colors.length>2" @click="removeThemeColor('audio-reactive',i)" class="u-btn-sm">✕</button></div>
-            <button v-if="themeConfig['audio-reactive'].colors.length<4" @click="addThemeColor('audio-reactive')" class="u-btn">+ Couleur</button>
-          </div>
-          <div v-if="ultimateTheme==='liquid'&&themeConfig.liquid" class="u-config"><h3 class="u-config-title">🫧 Liquid</h3>
-            <div class="u-row"><span>Vitesse: {{themeConfig.liquid.speed}}</span><input type="range" min="0.1" max="5" step="0.1" v-model.number="themeConfig.liquid.speed" @input="themeConfigChanged" class="u-range"/></div>
-            <div class="u-row"><span>Flou: {{themeConfig.liquid.blurIntensity}}px</span><input type="range" min="10" max="100" step="5" v-model.number="themeConfig.liquid.blurIntensity" @input="themeConfigChanged" class="u-range"/></div>
-            <div class="u-row" v-for="(c,i) in themeConfig.liquid.colors" :key="'lq-'+i"><span>Couleur {{i+1}}</span><input type="color" :value="c" @input="themeConfig.liquid.colors[i]=($event.target as HTMLInputElement).value;themeConfigChanged()"/><button v-if="themeConfig.liquid.colors.length>2" @click="removeThemeColor('liquid',i)" class="u-btn-sm">✕</button></div>
-            <button v-if="themeConfig.liquid.colors.length<4" @click="addThemeColor('liquid')" class="u-btn">+ Couleur</button>
-          </div>
-          <div v-if="ultimateTheme==='lofi'&&themeConfig.lofi" class="u-config"><h3 class="u-config-title">☕ Lo-Fi</h3>
-            <div class="u-row"><span>Météo</span><select v-model="themeConfig.lofi.weather" @change="themeConfigChanged" class="u-select-sm"><option value="rain">🌧 Pluie</option><option value="snow">❄ Neige</option><option value="clear">☀ Clair</option></select></div>
-            <div class="u-row"><span>Intensité: {{themeConfig.lofi.intensity}}</span><input type="range" min="0.1" max="3" step="0.1" v-model.number="themeConfig.lofi.intensity" @input="themeConfigChanged" class="u-range"/></div>
-            <div class="u-row"><span>Heure</span><select v-model="themeConfig.lofi.forceTimeOfDay" @change="themeConfigChanged" class="u-select-sm"><option value="auto">Auto</option><option value="day">Jour</option><option value="night">Nuit</option></select></div>
-          </div>
-          <div v-if="ultimateTheme==='retro-crt'&&themeConfig['retro-crt']" class="u-config"><h3 class="u-config-title">📺 CRT</h3>
-            <div class="u-row"><span>Scanlines: {{themeConfig['retro-crt'].scanlineOpacity}}</span><input type="range" min="0" max="1" step="0.05" v-model.number="themeConfig['retro-crt'].scanlineOpacity" @input="themeConfigChanged" class="u-range"/></div>
-            <div class="u-row"><span>Glitches: {{themeConfig['retro-crt'].glitchIntensity}}</span><input type="range" min="0" max="1" step="0.01" v-model.number="themeConfig['retro-crt'].glitchIntensity" @input="themeConfigChanged" class="u-range"/></div>
-            <div class="u-row"><span>Distortion: {{themeConfig['retro-crt'].distortion}}</span><input type="range" min="0" max="1" step="0.05" v-model.number="themeConfig['retro-crt'].distortion" @input="themeConfigChanged" class="u-range"/></div>
-          </div>
-          <div v-if="ultimateTheme==='vortex'&&themeConfig.vortex" class="u-config"><h3 class="u-config-title">🌀 Vortex</h3>
-            <div class="u-row"><span>Vitesse: {{themeConfig.vortex.speed}}</span><input type="range" min="0.1" max="5" step="0.1" v-model.number="themeConfig.vortex.speed" @input="themeConfigChanged" class="u-range"/></div>
-            <div class="u-row"><span>Couleur</span><input type="color" v-model="themeConfig.vortex.color" @input="themeConfigChanged"/></div>
-            <div class="u-row"><span>Rotation: {{themeConfig.vortex.cameraRotation}}</span><input type="range" min="0" max="3" step="0.1" v-model.number="themeConfig.vortex.cameraRotation" @input="themeConfigChanged" class="u-range"/></div>
-          </div>
-          <div class="u-section" style="margin-top:24px"><h3 style="color:#00e676;margin-bottom:12px">🧩 Extensions Chrome</h3>
-            <div style="display:flex;gap:10px;margin-bottom:12px"><input type="file" webkitdirectory directory ref="extensionInput" @change="loadChromeExtension" style="display:none"/><button @click="($refs.extensionInput as HTMLInputElement).click()" class="u-btn" style="flex:1">📁 Charger une extension</button></div>
-            <p v-if="extensionLoadMessage" :style="{color:extensionLoadError?'#ff4444':'#00e676',fontSize:'13px',marginBottom:'8px'}">{{extensionLoadMessage}}</p>
-            <div v-for="ext in extensions" :key="ext.id" class="u-ext-row">
-              <div style="flex:1;min-width:0"><p style="margin:0;font-weight:bold;color:#eee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ext.name}}</p><p style="margin:2px 0 0;font-size:12px;color:#888">v{{ext.version}}</p></div>
-              <label class="u-toggle"><input type="checkbox" :checked="ext.enabled" @change="toggleExtension(ext.id,!ext.enabled)"/><span class="u-toggle-slider"></span></label>
-              <button v-if="ext.optionsUrl" @click="openExtensionOptions(ext.id)" class="u-btn-sm" style="color:#00e676" title="Paramètres">⚙</button>
-              <button @click="removeExtension(ext.id)" class="u-btn-sm" style="color:#ff4444" title="Supprimer">✕</button>
+        <div v-if="currentTab === 6" class="nv">
+          <div class="nv-hero"><div class="nv-glow"></div><div class="nv-brand"><span class="nv-diamond">◆</span><div><h2 class="nv-title">NOVA</h2><p class="nv-sub">Moteur de personnalisation</p></div></div></div>
+          <div class="nv-scroll">
+            <!-- Apparence -->
+            <div class="nv-card">
+              <div class="nv-head"><span class="material-symbols-outlined">palette</span><span>Apparence</span></div>
+              <div class="nv-field"><div class="nv-ftop"><label>Opacité</label><span class="nv-val">{{ Math.round(ultimateOpacity * 100) }}%</span></div><input type="range" min="0.1" max="1" step="0.05" v-model="ultimateOpacity" @input="ultimateSettingsChanged" class="nv-range" /></div>
+              <div class="nv-field"><label>Thème visuel</label><div class="nv-trow"><select v-model="ultimateTheme" @change="ultimateSettingsChanged" class="nv-sel"><option value="none">Aucun</option><option v-for="theme in availableThemes" :key="'to-'+theme.id" :value="theme.id">{{ theme.name }}</option></select><button @click="openThemesDir" class="nv-ibtn" title="Ouvrir dossier"><span class="material-symbols-outlined">folder_open</span></button><button @click="scanThemes" class="nv-ibtn" title="Actualiser"><span class="material-symbols-outlined">refresh</span></button></div></div>
             </div>
-            <p v-if="extensions.length===0" style="color:#666;font-size:13px">Aucune extension</p>
+            <!-- Theme Config -->
+            <div v-for="theme in availableThemes" :key="'cfg-'+theme.id"><div v-if="ultimateTheme===theme.id && themeConfig[theme.id]" class="nv-card">
+              <div class="nv-head"><span class="material-symbols-outlined">tune</span><span>{{ theme.name }}</span></div>
+              <div v-for="field in theme.schema" :key="'f-'+field.key" class="nv-field">
+                <div v-if="field.type!=='color-array'" class="nv-ftop"><label>{{ field.label }}</label><span v-if="field.type==='range'" class="nv-val">{{ themeConfig[theme.id][field.key] }}</span></div>
+                <input v-if="field.type==='color'" type="color" v-model="themeConfig[theme.id][field.key]" @input="themeConfigChanged" class="nv-color"/>
+                <label v-if="field.type==='checkbox'||field.type==='boolean'" class="nv-tog"><input type="checkbox" v-model="themeConfig[theme.id][field.key]" @change="themeConfigChanged"/><span class="nv-track"><span class="nv-thumb"></span></span></label>
+                <input v-if="field.type==='range'" type="range" :min="field.min" :max="field.max" :step="field.step" v-model.number="themeConfig[theme.id][field.key]" @input="themeConfigChanged" class="nv-range"/>
+                <select v-if="field.type==='select'" v-model="themeConfig[theme.id][field.key]" @change="themeConfigChanged" class="nv-sel nv-sel-sm"><option v-for="(opt,oi) in field.options" :key="'o-'+oi" :value="typeof opt==='string'?opt:opt.value">{{ typeof opt==='string'?opt:opt.label }}</option></select>
+                <div v-if="field.type==='color-array'" class="nv-ca"><label>{{ field.label }}</label><div class="nv-calist"><div v-for="(c,i) in themeConfig[theme.id][field.key]" :key="'c-'+theme.id+'-'+i" class="nv-caitem"><input type="color" :value="c" @input="themeConfig[theme.id][field.key][i]=($event.target as HTMLInputElement).value;themeConfigChanged()" class="nv-color"/><button v-if="themeConfig[theme.id][field.key].length>2" @click="removeThemeColor(theme.id,i,field.key)" class="nv-carm"><span class="material-symbols-outlined">close</span></button></div><button v-if="themeConfig[theme.id][field.key].length<4" @click="addThemeColor(theme.id,field.key)" class="nv-caadd"><span class="material-symbols-outlined">add</span></button></div></div>
+              </div>
+            </div></div>
+            <!-- Extensions -->
+            <div class="nv-card">
+              <div class="nv-head"><span class="material-symbols-outlined">extension</span><span>Extensions Chrome</span></div>
+              <div class="nv-extact"><input type="file" webkitdirectory directory ref="extensionInput" @change="loadChromeExtension" style="display:none"/><button @click="($refs.extensionInput as HTMLInputElement).click()" class="nv-btnp"><span class="material-symbols-outlined">add_circle</span>Charger une extension</button></div>
+              <p v-if="extensionLoadMessage" :class="['nv-status',extensionLoadError?'nv-st-err':'nv-st-ok']"><span class="material-symbols-outlined">{{extensionLoadError?'error':'check_circle'}}</span>{{extensionLoadMessage}}</p>
+              <div v-for="ext in extensions" :key="ext.id" class="nv-ext">
+                <div class="nv-extinfo"><span class="nv-extname">{{ext.name}}</span><span class="nv-extver">v{{ext.version}}</span></div>
+                <div class="nv-extctrl"><label class="nv-tog"><input type="checkbox" :checked="ext.enabled" @change="toggleExtension(ext.id,!ext.enabled)"/><span class="nv-track"><span class="nv-thumb"></span></span></label><button v-if="ext.optionsUrl" @click="openExtensionOptions(ext.id)" class="nv-ibtn" title="Paramètres"><span class="material-symbols-outlined">settings</span></button><button @click="removeExtension(ext.id)" class="nv-ibtn nv-ibtn-d" title="Supprimer"><span class="material-symbols-outlined">delete</span></button></div>
+              </div>
+              <div v-if="extensions.length===0" class="nv-empty"><span class="material-symbols-outlined">extension_off</span><span>Aucune extension installée</span></div>
+            </div>
           </div>
         </div>
 
@@ -925,26 +923,89 @@ button {
   margin-left: 4px;
   color: #f44336;
 }
-.u-section { margin-bottom: 16px; }
-.u-label { color: #ccc; margin: 0 0 6px; font-size: 14px; font-weight: 500; }
-.u-range { width: 100%; cursor: pointer; accent-color: #00e676; }
-.u-select, .u-select-sm { padding: 6px 8px; background: #1a1a1a; color: #fff; border: 1px solid #333; border-radius: 4px; outline: none; font-size: 13px; }
-.u-select { width: 100%; }
-.u-select-sm { min-width: 120px; }
-.u-config { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
-.u-config-title { color: #00e676; margin: 0 0 10px; font-size: 14px; }
-.u-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; color: #ccc; font-size: 13px; }
-.u-row input[type="color"] { width: 32px; height: 28px; border: 1px solid #444; border-radius: 4px; background: transparent; cursor: pointer; padding: 0; }
-.u-row input[type="checkbox"] { accent-color: #00e676; width: 18px; height: 18px; cursor: pointer; }
-.u-btn { background: #222; color: #00e676; border: 1px solid #333; border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
-.u-btn:hover { background: #2a2a2a; }
-.u-btn-sm { background: transparent; border: none; color: #888; cursor: pointer; font-size: 16px; padding: 2px 6px; }
-.u-btn-sm:hover { color: #ff4444; }
-.u-ext-row { display: flex; align-items: center; gap: 10px; padding: 8px; background: #1a1a1a; border-radius: 6px; margin-bottom: 6px; }
-.u-toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
-.u-toggle input { opacity: 0; width: 0; height: 0; }
-.u-toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #333; border-radius: 22px; transition: 0.2s; }
-.u-toggle-slider:before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
-.u-toggle input:checked + .u-toggle-slider { background: #00e676; }
-.u-toggle input:checked + .u-toggle-slider:before { transform: translateX(18px); }
+/* — NOVA Sidebar — */
+.nova-sidebar { color: #2563eb !important; font-weight: 600 !important; letter-spacing: 1.5px; }
+.nova-sidebar-ic { color: #2563eb !important; }
+/* — NOVA Tab Layout — */
+.nv { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.nv-hero { position: relative; padding: 20px 20px 16px; flex-shrink: 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.nv-glow { position: absolute; top: -60px; left: -30px; width: 180px; height: 180px; background: radial-gradient(circle, rgba(37,99,235,0.1) 0%, transparent 70%); pointer-events: none; }
+.nv-brand { display: flex; align-items: center; gap: 12px; position: relative; z-index: 1; }
+.nv-diamond { font-size: 26px; background: linear-gradient(135deg, #2563eb, #7c3aed); -webkit-background-clip: text; -webkit-text-fill-color: transparent; filter: drop-shadow(0 0 8px rgba(37,99,235,0.25)); }
+.nv-title { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: 4px; background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.nv-sub { margin: 2px 0 0; font-size: 10px; color: #555; letter-spacing: 1.5px; text-transform: uppercase; }
+.nv-scroll { flex: 1; overflow-y: auto; padding: 16px 20px 20px; }
+.nv-scroll::-webkit-scrollbar { width: 5px; }
+.nv-scroll::-webkit-scrollbar-track { background: transparent; }
+.nv-scroll::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+.nv-scroll::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+/* — Cards — */
+.nv-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; transition: border-color 0.25s; }
+.nv-card:hover { border-color: rgba(255,255,255,0.09); }
+.nv-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 11px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 1.2px; }
+.nv-head .material-symbols-outlined { font-size: 16px; color: #2563eb; }
+/* — Fields — */
+.nv-field { margin-bottom: 12px; }
+.nv-field:last-child { margin-bottom: 0; }
+.nv-field > label { display: block; font-size: 12px; color: #777; margin-bottom: 6px; }
+.nv-ftop { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.nv-ftop label { font-size: 12px; color: #888; }
+.nv-val { font-size: 11px; color: #2563eb; font-weight: 600; font-variant-numeric: tabular-nums; background: rgba(37,99,235,0.08); padding: 2px 8px; border-radius: 4px; }
+/* — Range — */
+.nv-range { width: 100%; height: 4px; -webkit-appearance: none; appearance: none; background: rgba(255,255,255,0.07); border-radius: 2px; outline: none; cursor: pointer; }
+.nv-range::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #2563eb; cursor: pointer; box-shadow: 0 0 6px rgba(37,99,235,0.3); transition: box-shadow 0.2s; }
+.nv-range::-webkit-slider-thumb:hover { box-shadow: 0 0 12px rgba(37,99,235,0.5); }
+/* — Select — */
+.nv-sel { width: 100%; padding: 7px 10px; background: rgba(255,255,255,0.03); color: #ccc; border: 1px solid rgba(255,255,255,0.07); border-radius: 6px; outline: none; font-size: 12px; cursor: pointer; transition: border-color 0.2s; }
+.nv-sel:hover, .nv-sel:focus { border-color: rgba(37,99,235,0.25); }
+.nv-sel-sm { width: auto; min-width: 110px; }
+.nv-sel option { background: #141414; color: #ccc; }
+/* — Theme row — */
+.nv-trow { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.nv-trow .nv-sel { flex: 1; }
+/* — Icon buttons — */
+.nv-ibtn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); border-radius: 6px; color: #666; cursor: pointer; transition: all 0.2s; padding: 0; margin: 0; flex-shrink: 0; }
+.nv-ibtn:hover { background: rgba(255,255,255,0.06); color: #2563eb; border-color: rgba(37,99,235,0.2); }
+.nv-ibtn .material-symbols-outlined { font-size: 16px; }
+.nv-ibtn-d:hover { color: #ff4444; border-color: rgba(255,68,68,0.2); }
+/* — Color — */
+.nv-color { width: 34px; height: 26px; border: 1px solid rgba(255,255,255,0.1); border-radius: 5px; background: transparent; cursor: pointer; padding: 1px; transition: border-color 0.2s; }
+.nv-color:hover { border-color: rgba(37,99,235,0.3); }
+/* — Toggle — */
+.nv-tog { position: relative; display: inline-flex; align-items: center; cursor: pointer; flex-shrink: 0; }
+.nv-tog input { position: absolute; opacity: 0; width: 0; height: 0; }
+.nv-track { position: relative; width: 36px; height: 20px; background: rgba(255,255,255,0.08); border-radius: 10px; transition: background 0.3s; }
+.nv-thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #555; border-radius: 50%; transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
+.nv-tog input:checked + .nv-track { background: rgba(37,99,235,0.18); }
+.nv-tog input:checked + .nv-track .nv-thumb { transform: translateX(16px); background: #2563eb; box-shadow: 0 0 6px rgba(37,99,235,0.4); }
+/* — Color array — */
+.nv-ca { width: 100%; }
+.nv-ca > label { display: block; font-size: 12px; color: #888; margin-bottom: 6px; }
+.nv-calist { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.nv-caitem { display: flex; align-items: center; gap: 3px; }
+.nv-carm { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; background: transparent; border: none; color: #555; cursor: pointer; padding: 0; margin: 0; border-radius: 3px; transition: color 0.2s; }
+.nv-carm:hover { color: #ff4444; }
+.nv-carm .material-symbols-outlined { font-size: 13px; }
+.nv-caadd { display: flex; align-items: center; justify-content: center; width: 34px; height: 26px; background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.12); border-radius: 5px; color: #555; cursor: pointer; padding: 0; margin: 0; transition: all 0.2s; }
+.nv-caadd:hover { border-color: rgba(37,99,235,0.3); color: #2563eb; }
+.nv-caadd .material-symbols-outlined { font-size: 15px; }
+/* — Primary button — */
+.nv-btnp { display: flex; align-items: center; gap: 6px; width: 100%; padding: 9px 14px; background: rgba(37,99,235,0.06); border: 1px solid rgba(37,99,235,0.12); border-radius: 7px; color: #2563eb; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; margin: 0; justify-content: center; }
+.nv-btnp:hover { background: rgba(37,99,235,0.1); border-color: rgba(37,99,235,0.22); }
+.nv-btnp .material-symbols-outlined { font-size: 16px; }
+/* — Status — */
+.nv-status { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 6px 10px; border-radius: 5px; margin: 8px 0; }
+.nv-status .material-symbols-outlined { font-size: 14px; }
+.nv-st-ok { color: #2563eb; background: rgba(37,99,235,0.05); }
+.nv-st-err { color: #ff4444; background: rgba(255,68,68,0.05); }
+/* — Extensions — */
+.nv-extact { margin-bottom: 10px; }
+.nv-ext { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: rgba(255,255,255,0.015); border: 1px solid rgba(255,255,255,0.04); border-radius: 7px; margin-bottom: 5px; transition: border-color 0.2s; }
+.nv-ext:hover { border-color: rgba(255,255,255,0.08); }
+.nv-extinfo { display: flex; flex-direction: column; min-width: 0; }
+.nv-extname { font-size: 12px; font-weight: 500; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-extver { font-size: 10px; color: #555; margin-top: 1px; }
+.nv-extctrl { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.nv-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px; color: #3a3a3a; font-size: 12px; }
+.nv-empty .material-symbols-outlined { font-size: 28px; opacity: 0.5; }
 </style>

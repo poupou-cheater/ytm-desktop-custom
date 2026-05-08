@@ -26,7 +26,8 @@
     },
     schema: [
       { key: "speed", type: "range", label: "Vitesse", min: 0.1, max: 5, step: 0.1, default: 1.0 },
-      { key: "blurIntensity", type: "range", label: "Flou", min: 0, max: 100, step: 5, default: 40 }
+      { key: "blurIntensity", type: "range", label: "Flou", min: 0, max: 100, step: 5, default: 40 },
+      { key: "colors", type: "color-array", label: "Couleurs", default: ["#ff0055", "#0044ff", "#ffcc00"] }
     ],
 
     // Runtime state

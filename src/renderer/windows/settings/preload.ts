@@ -51,5 +51,7 @@ contextBridge.exposeInMainWorld("ytmd", {
   removeExtension: async (id: string) => await ipcRenderer.invoke("ultimate:remove-extension", id),
   toggleExtension: async (id: string, enabled: boolean) => await ipcRenderer.invoke("ultimate:toggle-extension", id, enabled),
   getDefaultThemeConfig: async () => await ipcRenderer.invoke("ultimate:get-default-theme-config"),
-  openExtensionOptions: async (id: string) => await ipcRenderer.invoke("ultimate:open-extension-options", id)
+  openExtensionOptions: async (id: string) => await ipcRenderer.invoke("ultimate:open-extension-options", id),
+  openThemesDir: async () => await ipcRenderer.invoke("ultimate:open-themes-dir"),
+  scanThemes: async () => await ipcRenderer.invoke("ultimate:scan-themes")
 });

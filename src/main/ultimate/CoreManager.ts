@@ -3,18 +3,6 @@ import log from "electron-log";
 import { ExtensionManager } from "./ExtensionManager";
 import { DownloadManager } from "./DownloadManager";
 import { ThemeManager } from "./ThemeManager";
-import { ThemeConfig } from "../../shared/store/schema";
-
-const DEFAULT_THEME_CONFIG: ThemeConfig = {
-  starry: { topColor: "#000000", bottomColor: "#142b44", starCount: 300, shootingStarCount: 4, showShootingStars: true, animationSpeed: 1.0 },
-  "audio-reactive": { bassSensitivity: 1.5, colors: ["#ff0055", "#0044ff", "#ffcc00"], shape: "bars" },
-  liquid: { colors: ["#ff0055", "#0044ff", "#ffcc00"], speed: 1.0, blurIntensity: 40 },
-  lofi: { weather: "rain", intensity: 1.0, forceTimeOfDay: "auto" },
-  "retro-crt": { scanlineOpacity: 0.3, glitchIntensity: 0.05, distortion: 0.0 },
-  vortex: { speed: 1.0, color: "#00ffff", cameraRotation: 0.0 }
-};
-
-export { DEFAULT_THEME_CONFIG };
 
 export class UltimateCoreManager {
   private mainWindow: BrowserWindow;
@@ -191,20 +179,26 @@ export class UltimateCoreManager {
       }
     });
 
-    ipcMain.handle("ultimate:get-default-theme-config", async () => {
-      return DEFAULT_THEME_CONFIG;
-    });
-
     ipcMain.handle("ultimate:open-extension-options", async (_event, id: string) => {
       return this.extensionManager.openExtensionOptions(id);
     });
 
-    ipcMain.handle("ultimate:list-themes", async () => {
-      return this.themeManager.scanThemes();
+    // Themes — all metadata comes from the .theme.js files themselves
+    ipcMain.handle("ultimate:scan-themes", async () => {
+      return this.themeManager.getThemesMetadata();
+    });
+
+    ipcMain.handle("ultimate:get-default-theme-config", async () => {
+      return this.themeManager.buildDefaultConfig();
     });
 
     ipcMain.handle("ultimate:get-themes-dir", async () => {
       return this.themeManager.getThemesDir();
+    });
+
+    ipcMain.handle("ultimate:open-themes-dir", async () => {
+      const { shell } = require("electron");
+      return shell.openPath(this.themeManager.getThemesDir());
     });
   }
 

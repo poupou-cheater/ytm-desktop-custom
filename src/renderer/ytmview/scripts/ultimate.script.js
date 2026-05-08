@@ -54,10 +54,15 @@ class UltimateThemeEngine {
         }
       }
     }
-    // Rebuild starry DOM if active so changes are visible immediately
-    if (this.currentTheme === "starry") {
-      this.cleanupStarryDOM();
-      this.initStarryDOM();
+    
+    // Notify active external theme of config updates
+    if (this._activeExternalTheme && this.currentTheme !== "none") {
+      var cfg = this.config[this.currentTheme] || this._activeExternalTheme.defaults || {};
+      if (typeof this._activeExternalTheme.updateConfig === "function") {
+        this._activeExternalTheme.updateConfig(cfg);
+      } else if (typeof this._activeExternalTheme.init === "function") {
+        this._activeExternalTheme.init(this.canvas, null, cfg);
+      }
     }
   }
   setFpsLimit(fps) { this.fpsLimit = fps || 60; }

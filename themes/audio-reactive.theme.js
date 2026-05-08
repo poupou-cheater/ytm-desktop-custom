@@ -27,7 +27,8 @@
     },
     schema: [
       { key: "bassSensitivity", type: "range", label: "Sensibilité basses", min: 0.1, max: 5, step: 0.1, default: 1.5 },
-      { key: "shape", type: "select", label: "Forme", options: ["bars", "circles"], default: "bars" }
+      { key: "shape", type: "select", label: "Forme", options: [{value: "bars", label: "Barres"}, {value: "circles", label: "Cercles"}], default: "bars" },
+      { key: "colors", type: "color-array", label: "Couleurs", default: ["#ff0055", "#0044ff", "#ffcc00"] }
     ],
 
     // Runtime state
