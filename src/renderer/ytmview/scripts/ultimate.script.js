@@ -47,10 +47,9 @@ class UltimateThemeEngine {
   updateConfig(newConfig) {
     if (newConfig) {
       for (var key in newConfig) {
-        if (this.config[key]) {
-          for (var prop in newConfig[key]) {
-            this.config[key][prop] = newConfig[key][prop];
-          }
+        if (!this.config[key]) this.config[key] = {};
+        for (var prop in newConfig[key]) {
+          this.config[key][prop] = newConfig[key][prop];
         }
       }
     }
