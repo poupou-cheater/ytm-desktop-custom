@@ -326,14 +326,15 @@ class UltimateUIInjector {
       const movie = document.querySelector(".html5-video-player");
       if (movie?.classList.contains("ad-showing")) {
         const video = document.querySelector("video");
-        if (video && video.duration < 300) {
-          video.currentTime = video.duration;
+        if (video) {
+          video.currentTime = video.duration || 9999;
+          video.playbackRate = 16;
           video.muted = true;
         }
         document.querySelector(".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button")?.click();
       }
     };
-    setInterval(blockAdDOM, 1000);
+    setInterval(blockAdDOM, 50);
     window._utAdBlockInstalled = true;
   }
 
