@@ -98,7 +98,7 @@ class UltimateThemeEngine {
 
   injectThemeBackground() {
     if (this.bgStyleEl) this.bgStyleEl.remove();
-    
+
     this.bgStyleEl = document.createElement("style");
     this.bgStyleEl.id = "ultimate-theme-bg";
     this.bgStyleEl.textContent = [
@@ -115,7 +115,7 @@ class UltimateThemeEngine {
 
     // Surgical MutationObserver
     if (this._bgObserver) this._bgObserver.disconnect();
-    
+
     this._bgObserver = new MutationObserver(mutations => {
       let shouldCleanup = false;
       for (let i = 0; i < mutations.length; i++) {
@@ -132,7 +132,7 @@ class UltimateThemeEngine {
     });
 
     this._bgObserver.observe(document.body, { childList: true, subtree: true });
-    
+
     // Initial surgical pass
     this._processNode(document.body);
     this._scheduleCleanup(0);
@@ -156,8 +156,8 @@ class UltimateThemeEngine {
 
   _injectShadowStyles(shadowRoot) {
     if (this._processedShadowRoots.has(shadowRoot)) return;
-    
-    const css = 
+
+    const css =
       "*:not(#oneko):not(img):not(video):not(canvas):not(yt-img-shadow):not(.image){background-color:transparent!important;background-image:none!important}" +
       ":host{background:transparent!important;--ytmusic-background-overlay-background:transparent!important}" +
       "#sliderBar, #progressContainer{background:rgba(255,255,255,0.2)!important;height:2px!important}" +
@@ -168,7 +168,7 @@ class UltimateThemeEngine {
     s.textContent = css;
     shadowRoot.appendChild(s);
     this._processedShadowRoots.add(shadowRoot);
-    
+
     // Process nested shadow roots
     const nested = shadowRoot.querySelectorAll("*");
     for (let i = 0; i < nested.length; i++) {
@@ -176,7 +176,8 @@ class UltimateThemeEngine {
     }
   }
 
-  _scheduleCleanup(delay = 300) {
+  // 100ms delay background
+  _scheduleCleanup(delay = 100) {
     if (this._cleanupTimeout) clearTimeout(this._cleanupTimeout);
     this._cleanupTimeout = setTimeout(() => this._runSurgicalCleanup(), delay);
   }
@@ -256,13 +257,14 @@ class UltimateUIInjector {
     const cb = document.createElement("div");
     cb.className = "ultimate-dl-btn style-scope ytmusic-menu-popup-renderer";
     cb.style.cssText = "padding:12px 16px;cursor:pointer;display:flex;align-items:center;color:#00e676;font-weight:bold;font-size:14px;";
-    cb.innerHTML = '<svg style="width:24px;height:24px;margin-right:16px;fill:#00e676" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Installer Hors-Ligne (Ultimate)';
-    
+    cb.innerHTML =
+      '<svg style="width:24px;height:24px;margin-right:16px;fill:#00e676" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg> Installer Hors-Ligne (Ultimate)';
+
     cb.onclick = () => {
       if (window.ultimateAPI) {
         window.ultimateAPI.downloadTrack(window.location.href, "C:\\Downloads\\YTM_Ultimate", "mp3");
         cb.lastChild.textContent = " T\u00e9l\u00e9chargement initi\u00e9...";
-        setTimeout(() => cb.lastChild.textContent = " Installer Hors-Ligne (Ultimate)", 2000);
+        setTimeout(() => (cb.lastChild.textContent = " Installer Hors-Ligne (Ultimate)"), 2000);
       }
     };
     parent.insertBefore(cb, sibling.nextSibling);
@@ -291,11 +293,15 @@ class UltimateUIInjector {
         this._themes[theme.id] = theme;
         if (window.__ultimateTheme) window.__ultimateTheme._onThemeRegistered(theme.id);
       },
-      get: function (id) { return this._themes[id] || null; },
+      get: function (id) {
+        return this._themes[id] || null;
+      },
       list: function () {
         return Object.values(this._themes).map(t => ({ id: t.id, name: t.name, schema: t.schema || [], defaults: t.defaults || {} }));
       },
-      has: function (id) { return !!this._themes[id]; }
+      has: function (id) {
+        return !!this._themes[id];
+      }
     };
   }
 
@@ -305,18 +311,23 @@ class UltimateUIInjector {
       return origFetch.apply(this, arguments).then(response => {
         const url = typeof input === "string" ? input : input?.url || "";
         if (url.includes("/youtubei/v1/player")) {
-          return response.clone().text().then(body => {
-            try {
-              const json = JSON.parse(body);
-              ["adPlacements", "playerAds", "adSlots", "adBreakParams", "adBreakHeartbeatParams"].forEach(k => delete json[k]);
-              if (json.playbackTracking) {
-                ["ptrackingUrl", "qoeUrl", "atrUrl"].forEach(k => {
-                  if (json.playbackTracking[k]?.baseUrl?.includes("adformat")) delete json.playbackTracking[k];
-                });
+          return response
+            .clone()
+            .text()
+            .then(body => {
+              try {
+                const json = JSON.parse(body);
+                ["adPlacements", "playerAds", "adSlots", "adBreakParams", "adBreakHeartbeatParams"].forEach(k => delete json[k]);
+                if (json.playbackTracking) {
+                  ["ptrackingUrl", "qoeUrl", "atrUrl"].forEach(k => {
+                    if (json.playbackTracking[k]?.baseUrl?.includes("adformat")) delete json.playbackTracking[k];
+                  });
+                }
+                return new Response(JSON.stringify(json), { status: response.status, statusText: response.statusText, headers: response.headers });
+              } catch (e) {
+                return response;
               }
-              return new Response(JSON.stringify(json), { status: response.status, statusText: response.statusText, headers: response.headers });
-            } catch (e) { return response; }
-          });
+            });
         }
         return response;
       });
@@ -341,4 +352,3 @@ class UltimateUIInjector {
   new UltimateUIInjector();
   window.__ultimateTheme = new UltimateThemeEngine();
 })();
-
