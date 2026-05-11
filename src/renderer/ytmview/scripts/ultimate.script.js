@@ -333,19 +333,68 @@ class UltimateUIInjector {
       });
     };
 
+    let weMuted = false;
     const blockAdDOM = () => {
       const movie = document.querySelector(".html5-video-player");
-      if (movie?.classList.contains("ad-showing")) {
-        const video = document.querySelector("video");
+      const video = document.querySelector("video");
+      const isAd = movie?.classList.contains("ad-showing") || movie?.classList.contains("ad-interrupting");
+
+      if (isAd) {
         if (video) {
-          video.currentTime = video.duration || 9999;
-          video.playbackRate = 16;
-          video.muted = true;
+          if (!video.muted) {
+            video.muted = true;
+            video.volume = 0;
+            weMuted = true;
+          }
+          if (video.currentTime < (video.duration || 9999)) {
+            video.currentTime = video.duration || 9999;
+            video.playbackRate = 16;
+          }
         }
-        document.querySelector(".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button")?.click();
+        const skipBtn = document.querySelector(".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button");
+        if (skipBtn) skipBtn.click();
+
+        const adModule = document.querySelector(".ytp-ad-module, .ytp-ad-overlay-container");
+        if (adModule) adModule.style.display = "none";
+      } else if (weMuted) {
+        if (video) {
+          video.muted = false;
+          // Restore volume from player API if possible
+          const pb = document.querySelector("ytmusic-app-layout>ytmusic-player-bar");
+          if (pb?.playerApi?.getVolume) {
+            video.volume = pb.playerApi.getVolume() / 100;
+          }
+        }
+        weMuted = false;
       }
     };
-    setInterval(blockAdDOM, 50);
+
+    // Hook play to mute ads before they even start
+    const originalPlay = HTMLVideoElement.prototype.play;
+    HTMLVideoElement.prototype.play = function() {
+      const player = this.closest(".html5-video-player") || document.querySelector(".html5-video-player");
+      if (player?.classList.contains("ad-showing") || player?.classList.contains("ad-interrupting")) {
+        this.muted = true;
+        this.volume = 0;
+      }
+      return originalPlay.apply(this, arguments);
+    };
+
+    // Use MutationObserver for instantaneous reaction
+    const setupAdObserver = () => {
+      const player = document.querySelector(".html5-video-player");
+      if (player) {
+        const observer = new MutationObserver(blockAdDOM);
+        observer.observe(player, { attributes: true, attributeFilter: ["class"] });
+        blockAdDOM(); // Initial check
+      } else {
+        setTimeout(setupAdObserver, 500);
+      }
+    };
+    setupAdObserver();
+    
+    // Keep interval as a fallback
+    setInterval(blockAdDOM, 100);
     window._utAdBlockInstalled = true;
   }
 
