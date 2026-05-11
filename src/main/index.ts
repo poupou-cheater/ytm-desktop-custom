@@ -1239,8 +1239,20 @@ app.on("ready", async () => {
     return callback(false);
   });
 
-  // Block ad tracking requests that cause CORS errors
-  ytmSession.webRequest.onBeforeRequest({ urls: ["*://www.youtube.com/pagead/*"] }, (details, callback) => {
+  // Hard Adblocker: Block all known YouTube ad and tracking endpoints at the network level
+  const hardAdBlockUrls = [
+    "*://*.youtube.com/pagead/*",
+    "*://*.youtube.com/api/stats/ads*",
+    "*://*.youtube.com/api/stats/qoe?*adformat=*",
+    "*://*.youtube.com/ptracking*",
+    "*://*.google.com/pagead/*",
+    "*://*.doubleclick.net/*",
+    "*://*.googlesyndication.com/*",
+    "*://*.googlevideo.com/videoplayback?*adformat=*",
+    "*://*.googlevideo.com/videoplayback?*&adformat=*",
+    "*://*.youtube.com/generate_204?*adformat=*"
+  ];
+  ytmSession.webRequest.onBeforeRequest({ urls: hardAdBlockUrls }, (details, callback) => {
     callback({ cancel: true });
   });
 

@@ -306,23 +306,40 @@ class UltimateUIInjector {
   }
 
   if (!window._utAdBlockInstalled) {
+    // 1. Intercept JSON.parse to destroy ad data regardless of how it was loaded (Fetch, XHR, inline)
+    const origJSONParse = JSON.parse;
+    JSON.parse = function(text, reviver) {
+      const obj = origJSONParse.apply(this, arguments);
+      if (obj && typeof obj === 'object') {
+        if (obj.playerAds || obj.adPlacements || obj.adSlots) {
+          delete obj.adPlacements;
+          delete obj.playerAds;
+          delete obj.adSlots;
+          delete obj.adBreakParams;
+          delete obj.adBreakHeartbeatParams;
+        }
+        if (obj.playbackTracking) {
+          if (obj.playbackTracking.ptrackingUrl?.baseUrl?.includes("adformat")) delete obj.playbackTracking.ptrackingUrl;
+          if (obj.playbackTracking.qoeUrl?.baseUrl?.includes("adformat")) delete obj.playbackTracking.qoeUrl;
+          if (obj.playbackTracking.atrUrl?.baseUrl?.includes("adformat")) delete obj.playbackTracking.atrUrl;
+        }
+      }
+      return obj;
+    };
+
+    // 2. Fallback Fetch interceptor
     const origFetch = window.fetch;
     window.fetch = function (input, init) {
       return origFetch.apply(this, arguments).then(response => {
         const url = typeof input === "string" ? input : input?.url || "";
-        if (url.includes("/youtubei/v1/player")) {
+        if (url.includes("/youtubei/v1/player") || url.includes("/youtubei/v1/next")) {
           return response
             .clone()
             .text()
             .then(body => {
               try {
+                // The JSON.parse override above will automatically clean this!
                 const json = JSON.parse(body);
-                ["adPlacements", "playerAds", "adSlots", "adBreakParams", "adBreakHeartbeatParams"].forEach(k => delete json[k]);
-                if (json.playbackTracking) {
-                  ["ptrackingUrl", "qoeUrl", "atrUrl"].forEach(k => {
-                    if (json.playbackTracking[k]?.baseUrl?.includes("adformat")) delete json.playbackTracking[k];
-                  });
-                }
                 return new Response(JSON.stringify(json), { status: response.status, statusText: response.statusText, headers: response.headers });
               } catch (e) {
                 return response;
@@ -331,6 +348,30 @@ class UltimateUIInjector {
         }
         return response;
       });
+    };
+
+    // 3. Fallback XHR Interceptor
+    const OrigXHR = window.XMLHttpRequest;
+    window.XMLHttpRequest = class extends OrigXHR {
+      constructor() { super(); }
+      open(method, url, ...args) {
+        this._url = typeof url === 'string' ? url : (url ? url.toString() : '');
+        return super.open(method, url, ...args);
+      }
+      get responseText() {
+        let text = super.responseText;
+        if (this._url && (this._url.includes("/youtubei/v1/player") || this._url.includes("/youtubei/v1/next")) && text) {
+          try {
+            const json = JSON.parse(text); // Will be cleaned by our JSON.parse hook
+            text = JSON.stringify(json);
+          } catch (e) {}
+        }
+        return text;
+      }
+      get response() {
+        if (this.responseType === '' || this.responseType === 'text') return this.responseText;
+        return super.response;
+      }
     };
 
     let weMuted = false;
@@ -346,9 +387,9 @@ class UltimateUIInjector {
             video.volume = 0;
             weMuted = true;
           }
-          if (video.currentTime < (video.duration || 9999)) {
-            video.currentTime = video.duration || 9999;
-            video.playbackRate = 16;
+          // Skip smoothly to the very end to avoid freezing
+          if (video.duration && video.currentTime < video.duration - 0.5) {
+            video.currentTime = video.duration - 0.5;
           }
         }
         const skipBtn = document.querySelector(".ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button");
